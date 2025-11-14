@@ -47,8 +47,7 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # Install comfy-cli + dependencies needed by it to install ComfyUI
-RUN uv pip install comfy-cli pip setuptools wheel 
-RUN uv pip install --no-build-isolation sageattention
+RUN uv pip install comfy-cli pip setuptools wheel numpy nvidia-cuda-nvcc nvidia-cusparse-cu12
 
 # Install ComfyUI
 RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
@@ -60,7 +59,11 @@ RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
 # Upgrade PyTorch if needed (for newer CUDA versions)
 RUN if [ "$ENABLE_PYTORCH_UPGRADE" = "true" ]; then \
       uv pip install --force-reinstall torch torchvision torchaudio --index-url ${PYTORCH_INDEX_URL}; \
+    else \
+      uv pip install torch torchvision torchaudio; \
     fi
+    
+RUN uv pip install --no-build-isolation sageattention
 
 # Change working directory to ComfyUI
 WORKDIR /comfyui
@@ -72,7 +75,7 @@ ADD src/extra_model_paths.yaml ./
 WORKDIR /
 
 # Install Python runtime dependencies for the handler
-RUN uv pip install runpod requests websocket-client
+RUN uv pip install runpod requests websocket-client boto3
 
 # Add application code and scripts
 ADD src/start.sh handler.py test_input.json ./
