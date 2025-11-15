@@ -87,8 +87,8 @@ RUN chmod +x /usr/local/bin/comfy-manager-set-mode
 # Set the default command to run when starting the container
 CMD ["/start.sh"]
 
-# Stage 2: Download models
-FROM base AS downloader
+# Stage 2: Final image with pre-cached models and nodes
+FROM base AS final
 
 ARG HUGGINGFACE_ACCESS_TOKEN
 # Set default model type if none is provided
@@ -100,11 +100,8 @@ WORKDIR /comfyui
 # Create necessary directories upfront
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
 
-# Download checkpoints/vae/unet/clip models to include in image based on model type
+# Install custom nodes and pre-cache models
 RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools
 
-# Stage 3: Final image
-FROM base AS final
-
-# Copy models from stage 2 to the final image
-COPY --from=downloader /comfyui/models /comfyui/models
+# Return to root
+WORKDIR /
