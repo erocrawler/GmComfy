@@ -101,7 +101,7 @@ WORKDIR /comfyui
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
 
 # Download checkpoints/vae/unet/clip models to include in image based on model type
-RUN comfy-node-install comfyui-kjnodes ComfyUI-VideoHelperSuite ComfyUI-TeaCache ComfyUI-WanMoeKSampler ComfyUI_LayerStyle ComfyUI-Crystools
+RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools
 
 # Stage 3: Final image
 FROM base AS final
