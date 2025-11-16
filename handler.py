@@ -215,7 +215,7 @@ def check_server(url, retries=500, delay=50):
     return False
 
 
-def upload_files(images):
+def upload_input_files(images):
     """
     Upload a list of images (base64 encoded or URLs) to the ComfyUI server using the /upload/image endpoint.
 
@@ -509,7 +509,7 @@ def process_output_files(outputs, job_id):
                             temp_file_path = temp_file.name
                         print(f"worker-comfyui - Wrote file bytes to temporary file: {temp_file_path}")
 
-                        s3_url = upload_image(job_id, temp_file_path)
+                        s3_url = upload_output_files(job_id, temp_file_path)
                         try:
                             os.remove(temp_file_path)
                         except Exception:
@@ -545,21 +545,22 @@ def process_output_files(outputs, job_id):
     return output_files, errors
 
 
-def upload_image(job_id, file_path):
+def upload_output_files(job_id, file_path):
     """
     Upload a local file to the configured S3-compatible bucket and return the public URL.
 
-    This tries to use boto3 with a botocore `Config(request_checksum_calculation='when_required')`
-    as requested. If `boto3` is not installed or an upload fails (for example missing/invalid
-    credentials), the function falls back to copying the file into a local
-    `simulated_uploaded/{job_id}/` directory and returns that path.
+    Uses boto3 with a botocore `Config(request_checksum_calculation='when_required')`.
+    Requires BUCKET_ENDPOINT_URL and BUCKET_NAME to be configured.
 
     Args:
         job_id (str): Job identifier, used to build the remote/object key.
         file_path (str): Path to the local file to upload.
 
     Returns:
-        str: URL or path to the uploaded object.
+        str: URL to the uploaded object.
+
+    Raises:
+        Exception: If upload fails or required bucket configuration is missing.
     """
     endpoint = os.environ.get("BUCKET_ENDPOINT_URL")
     bucket = os.environ.get("BUCKET_NAME")
@@ -567,56 +568,42 @@ def upload_image(job_id, file_path):
     secret_key = os.environ.get("BUCKET_SECRET_ACCESS_KEY")
     region = os.environ.get("BUCKET_REGION") or None
 
+    if not endpoint or not bucket:
+        raise ValueError(
+            "S3 upload requires BUCKET_ENDPOINT_URL and BUCKET_NAME to be configured"
+        )
+
     filename = os.path.basename(file_path)
     key = f"{job_id}/{filename}"
 
-    # If boto3 is available and endpoint + bucket are configured, try real upload
-    if boto3 and endpoint and bucket:
-        try:
-            # Use botocore Config to enable request checksum calculation when required
-            try:
-                client_config = BConfig(request_checksum_calculation="when_required")
-            except TypeError:
-                client_config = None
-
-            s3_client_kwargs = {
-                "endpoint_url": endpoint,
-            }
-            if access_key is not None:
-                s3_client_kwargs["aws_access_key_id"] = access_key
-            if secret_key is not None:
-                s3_client_kwargs["aws_secret_access_key"] = secret_key
-            if region:
-                s3_client_kwargs["region_name"] = region
-            if client_config is not None:
-                s3_client_kwargs["config"] = client_config
-
-            s3 = boto3.client("s3", **s3_client_kwargs)
-
-            # Upload the file
-            s3.upload_file(file_path, bucket, key)
-
-            # Construct a public URL (best-effort; exact URL form depends on provider)
-            if endpoint.endswith("/"):
-                endpoint = endpoint[:-1]
-            # If endpoint looks like an S3 AWS URL, return standard S3 URL, otherwise combine
-            url = f"{endpoint}/{bucket}/{key}"
-            return url
-        except Exception as e:
-            print(f"worker-comfyui - S3 upload failed: {e}")
-
-    # Fallback: save to a local simulated upload directory so tests & dev environments work
+    # Use botocore Config to enable request checksum calculation when required
     try:
-        simulated_dir = os.path.join("simulated_uploaded", str(job_id))
-        os.makedirs(simulated_dir, exist_ok=True)
-        dest_path = os.path.join(simulated_dir, filename)
-        with open(file_path, "rb") as src, open(dest_path, "wb") as dst:
-            dst.write(src.read())
-        return dest_path
-    except Exception as e:
-        print(f"worker-comfyui - Fallback upload failed: {e}")
-        # As a last resort, return the original path
-        return file_path
+        client_config = BConfig(request_checksum_calculation="when_required")
+    except TypeError:
+        client_config = None
+
+    s3_client_kwargs = {
+        "endpoint_url": endpoint,
+    }
+    if access_key is not None:
+        s3_client_kwargs["aws_access_key_id"] = access_key
+    if secret_key is not None:
+        s3_client_kwargs["aws_secret_access_key"] = secret_key
+    if region:
+        s3_client_kwargs["region_name"] = region
+    if client_config is not None:
+        s3_client_kwargs["config"] = client_config
+
+    s3 = boto3.client("s3", **s3_client_kwargs)
+
+    # Upload the file
+    s3.upload_file(file_path, bucket, key)
+
+    # Construct a public URL (best-effort; exact URL form depends on provider)
+    if endpoint.endswith("/"):
+        endpoint = endpoint[:-1]
+    url = f"{endpoint}/{bucket}/{key}"
+    return url
 
 def handler(job):
     """
@@ -652,7 +639,7 @@ def handler(job):
 
     # Upload input images if they exist
     if input_images:
-        upload_result = upload_files(input_images)
+        upload_result = upload_input_files(input_images)
         if upload_result["status"] == "error":
             # Return upload errors
             return {

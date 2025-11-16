@@ -102,13 +102,13 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         mock_get.assert_called_with("http://127.0.0.1:8188/history/123", timeout=30)
 
     @patch("handler.os.path.exists")
-    @patch("handler.upload_image")
+    @patch("handler.upload_output_files")
     @patch.dict(
         os.environ, {"COMFY_OUTPUT_PATH": RUNPOD_WORKER_COMFY_TEST_RESOURCES_IMAGES}
     )
-    def test_bucket_endpoint_not_configured(self, mock_upload_image, mock_exists):
+    def test_bucket_endpoint_not_configured(self, mock_upload_output_files, mock_exists):
         mock_exists.return_value = True
-        mock_upload_image.return_value = "simulated_uploaded/image.png"
+        mock_upload_output_files.return_value = "simulated_uploaded/image.png"
         # Mock get_file_data to return bytes so the processor doesn't try HTTP/local read
         with patch("handler.get_file_data", return_value=b"filebytes"):
             outputs = {
@@ -122,7 +122,7 @@ class TestRunpodWorkerComfy(unittest.TestCase):
             self.assertEqual(errors, [])
 
     @patch("handler.os.path.exists")
-    @patch("handler.upload_image")
+    @patch("handler.upload_output_files")
     @patch.dict(
         os.environ,
         {
@@ -130,12 +130,12 @@ class TestRunpodWorkerComfy(unittest.TestCase):
             "BUCKET_ENDPOINT_URL": "http://example.com",
         },
     )
-    def test_bucket_endpoint_configured(self, mock_upload_image, mock_exists):
+    def test_bucket_endpoint_configured(self, mock_upload_output_files, mock_exists):
         # Mock the os.path.exists to return True, simulating that the image exists
         mock_exists.return_value = True
 
-        # Mock the rp_upload.upload_image to return a simulated URL
-        mock_upload_image.return_value = "http://example.com/uploaded/image.png"
+        # Mock the rp_upload.upload_output_files to return a simulated URL
+        mock_upload_output_files.return_value = "http://example.com/uploaded/image.png"
 
         # Define the outputs and job_id for the test
         with patch("handler.get_file_data", return_value=b"filebytes"):
@@ -153,36 +153,60 @@ class TestRunpodWorkerComfy(unittest.TestCase):
             self.assertEqual(files[0]["type"], "s3_url")
             self.assertEqual(files[0]["data"], "http://example.com/uploaded/image.png")
 
-    @patch("handler.os.path.exists")
-    @patch("handler.upload_image")
-    @patch.dict(
-        os.environ,
-        {
-            "COMFY_OUTPUT_PATH": RUNPOD_WORKER_COMFY_TEST_RESOURCES_IMAGES,
-            "BUCKET_ENDPOINT_URL": "http://example.com",
-            "BUCKET_ACCESS_KEY_ID": "",
-            "BUCKET_SECRET_ACCESS_KEY": "",
-        },
-    )
-    def test_bucket_image_upload_fails_env_vars_wrong_or_missing(
-        self, mock_upload_image, mock_exists
-    ):
-        # Simulate the file existing in the output path
-        mock_exists.return_value = True
+    @patch("handler.boto3")
+    def test_upload_output_files_success(self, mock_boto3):
+        """Test successful S3 upload with boto3"""
+        mock_s3 = MagicMock()
+        mock_boto3.client.return_value = mock_s3
 
-        # When AWS credentials are wrong or missing, upload_image should return 'simulated_uploaded/...'
-        mock_upload_image.return_value = "simulated_uploaded/image.png"
+        with patch.dict(
+            os.environ,
+            {
+                "BUCKET_ENDPOINT_URL": "http://example.com",
+                "BUCKET_NAME": "test-bucket",
+                "BUCKET_ACCESS_KEY_ID": "test-key",
+                "BUCKET_SECRET_ACCESS_KEY": "test-secret",
+            },
+        ):
+            result = handler.upload_output_files("job123", "/path/to/file.png")
 
-        outputs = {
-            "node_id": {"images": [{"filename": "ComfyUI_00001_.png", "subfolder": ""}]}
-        }
-        job_id = "123"
-        with patch("handler.get_file_data", return_value=b"filebytes"):
-            files, errors = handler.process_output_files(outputs, job_id)
+            # Verify boto3.client was called with correct parameters
+            mock_boto3.client.assert_called_once()
+            call_kwargs = mock_boto3.client.call_args[1]
+            self.assertEqual(call_kwargs["endpoint_url"], "http://example.com")
+            self.assertEqual(call_kwargs["aws_access_key_id"], "test-key")
+            self.assertEqual(call_kwargs["aws_secret_access_key"], "test-secret")
 
-            self.assertEqual(len(files), 1)
-            self.assertEqual(files[0]["type"], "s3_url")
-            self.assertIn("simulated_uploaded", files[0]["data"])
+            # Verify upload_file was called
+            mock_s3.upload_file.assert_called_once_with("/path/to/file.png", "test-bucket", "job123/file.png")
+
+            # Verify the returned URL is correct
+            self.assertEqual(result, "http://example.com/test-bucket/job123/file.png")
+
+    def test_upload_output_files_missing_bucket_config(self):
+        """Test that upload_output_files raises error when bucket config is missing"""
+        with patch.dict(os.environ, {"BUCKET_ENDPOINT_URL": ""}, clear=False):
+            with self.assertRaises(ValueError) as context:
+                handler.upload_output_files("job123", "/path/to/file.png")
+            self.assertIn("BUCKET_ENDPOINT_URL and BUCKET_NAME", str(context.exception))
+
+    @patch("handler.boto3")
+    def test_upload_output_files_upload_fails(self, mock_boto3):
+        """Test that upload_output_files propagates boto3 errors"""
+        mock_s3 = MagicMock()
+        mock_s3.upload_file.side_effect = Exception("S3 upload failed")
+        mock_boto3.client.return_value = mock_s3
+
+        with patch.dict(
+            os.environ,
+            {
+                "BUCKET_ENDPOINT_URL": "http://example.com",
+                "BUCKET_NAME": "test-bucket",
+            },
+        ):
+            with self.assertRaises(Exception) as context:
+                handler.upload_output_files("job123", "/path/to/file.png")
+            self.assertIn("S3 upload failed", str(context.exception))
 
     @patch("handler.requests.post")
     def test_upload_images_successful(self, mock_post):
@@ -194,7 +218,7 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         test_image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
 
         images = [{"name": "test_image.png", "image": test_image_data}]
-        responses = handler.upload_files(images)
+        responses = handler.upload_input_files(images)
 
         self.assertEqual(len(responses), 3)
         self.assertEqual(responses["status"], "success")
@@ -211,7 +235,147 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         test_image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
 
         images = [{"name": "test_image.png", "image": test_image_data}]
-        responses = handler.upload_files(images)
+        responses = handler.upload_input_files(images)
 
         self.assertEqual(len(responses), 3)
         self.assertEqual(responses["status"], "error")
+
+    def test_upload_input_files_no_images(self):
+        """Test upload_input_files with empty list returns success with no details"""
+        result = handler.upload_input_files([])
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["message"], "No images to upload")
+        self.assertEqual(result["details"], [])
+
+    def test_upload_input_files_none(self):
+        """Test upload_input_files with None returns success with no details"""
+        result = handler.upload_input_files(None)
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(result["message"], "No images to upload")
+        self.assertEqual(result["details"], [])
+
+    @patch("handler.requests.post")
+    def test_upload_input_files_base64_success(self, mock_post):
+        """Test successful upload of base64 encoded image"""
+        mock_response = unittest.mock.Mock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        test_image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
+        images = [{"name": "test_image.png", "image": test_image_data}]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(len(result["details"]), 1)
+        self.assertIn("Successfully uploaded test_image.png", result["details"][0])
+        mock_post.assert_called_once()
+
+    @patch("handler.requests.get")
+    @patch("handler.requests.post")
+    def test_upload_input_files_url_success(self, mock_post, mock_get):
+        """Test successful upload of image from URL"""
+        mock_get_response = unittest.mock.Mock()
+        mock_get_response.content = b"Downloaded Image Data"
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = unittest.mock.Mock()
+        mock_post_response.status_code = 200
+        mock_post.return_value = mock_post_response
+
+        images = [{"name": "remote_image.png", "image": "https://example.com/image.png"}]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(len(result["details"]), 1)
+        self.assertIn("Successfully uploaded remote_image.png", result["details"][0])
+        mock_get.assert_called_once_with("https://example.com/image.png", timeout=30)
+        mock_post.assert_called_once()
+
+    @patch("handler.requests.post")
+    def test_upload_input_files_data_uri_format(self, mock_post):
+        """Test successful upload of data URI formatted image"""
+        mock_response = unittest.mock.Mock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
+        data_uri = f"data:image/png;base64,{image_data}"
+        images = [{"name": "data_uri_image.png", "image": data_uri}]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(len(result["details"]), 1)
+        self.assertIn("Successfully uploaded data_uri_image.png", result["details"][0])
+
+    @patch("handler.requests.post")
+    def test_upload_input_files_base64_decode_error(self, mock_post):
+        """Test upload with invalid base64 data"""
+        images = [{"name": "bad_image.png", "image": "not-valid-base64!!!"}]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Some images failed to upload", result["message"])
+        self.assertTrue(any("Error decoding base64" in error for error in result["details"]))
+        mock_post.assert_not_called()
+
+    @patch("handler.requests.get")
+    def test_upload_input_files_url_download_timeout(self, mock_get):
+        """Test upload with URL download timeout"""
+        mock_get.side_effect = requests.Timeout()
+        images = [{"name": "timeout_image.png", "image": "https://example.com/image.png"}]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Some images failed to upload", result["message"])
+        self.assertTrue(any("Timeout uploading" in error for error in result["details"]))
+
+    @patch("handler.requests.get")
+    @patch("handler.requests.post")
+    def test_upload_input_files_post_request_error(self, mock_post, mock_get):
+        """Test upload with POST request error"""
+        mock_get_response = unittest.mock.Mock()
+        mock_get_response.content = b"Image Data"
+        mock_get.return_value = mock_get_response
+
+        mock_post_response = unittest.mock.Mock()
+        mock_post_response.raise_for_status.side_effect = requests.RequestException("Upload failed")
+        mock_post.return_value = mock_post_response
+
+        images = [{"name": "error_image.png", "image": "https://example.com/image.png"}]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("Some images failed to upload", result["message"])
+        self.assertTrue(any("Error uploading error_image.png" in error for error in result["details"]))
+
+    @patch("handler.requests.post")
+    def test_upload_input_files_multiple_images_partial_failure(self, mock_post):
+        """Test upload with multiple images where some succeed and some fail"""
+        def side_effect(*args, **kwargs):
+            mock_response = unittest.mock.Mock()
+            # Fail on the second call
+            if mock_post.call_count == 2:
+                mock_response.raise_for_status.side_effect = requests.RequestException("Failed")
+            else:
+                mock_response.status_code = 200
+            return mock_response
+
+        mock_post.side_effect = side_effect
+
+        image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
+        images = [
+            {"name": "image1.png", "image": image_data},
+            {"name": "image2.png", "image": image_data},
+        ]
+
+        result = handler.upload_input_files(images)
+
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(len(result["details"]), 1)  # One success, one error
+        self.assertIn("Error uploading image2.png", result["details"][0])
