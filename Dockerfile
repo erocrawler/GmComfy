@@ -32,6 +32,8 @@ RUN apt-get update && apt-get install -y \
     libxrender1 \
     ffmpeg \
     nvidia-cuda-toolkit \
+    build-essential \
+    python3-dev \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
     && ln -sf /usr/bin/pip3 /usr/bin/pip
 
@@ -101,7 +103,7 @@ WORKDIR /comfyui
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
 
 # Install custom nodes and pre-cache models
-RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools
+RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF
 
 # Return to root
 WORKDIR /

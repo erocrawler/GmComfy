@@ -22,7 +22,7 @@ except Exception:
     BConfig = None
 
 # Time to wait between API check attempts in milliseconds
-COMFY_API_AVAILABLE_INTERVAL_MS = 50
+COMFY_API_AVAILABLE_INTERVAL_MS = int(os.environ.get("COMFY_API_AVAILABLE_INTERVAL_MS", 500))
 # Maximum number of API check attempts
 COMFY_API_AVAILABLE_MAX_RETRIES = 500
 # Websocket reconnection behaviour (can be overridden through environment variables)
@@ -139,7 +139,10 @@ def validate_input(job_input):
     Validates the input for the handler function.
 
     Args:
-        job_input (dict): The input data to validate.
+        job_input (dict): The input data to validate. May contain:
+                          - 'workflow': Required workflow definition
+                          - 'images': Optional list of images (base64 encoded or URLs)
+                          - 'comfy_org_api_key': Optional API key for Comfy.org API Nodes
 
     Returns:
         tuple: A tuple containing the validated data and an error message, if any.
@@ -221,10 +224,12 @@ def check_server(url, retries=500, delay=50):
 
 def upload_images(images):
     """
-    Upload a list of base64 encoded images to the ComfyUI server using the /upload/image endpoint.
+    Upload a list of images (base64 encoded or URLs) to the ComfyUI server using the /upload/image endpoint.
 
     Args:
-        images (list): A list of dictionaries, each containing the 'name' of the image and the 'image' as a base64 encoded string.
+        images (list): A list of dictionaries, each containing:
+                       - 'name': The filename for the image
+                       - 'image': Either a base64 encoded string or a URL to the image
 
     Returns:
         dict: A dictionary indicating success or error.
@@ -240,18 +245,29 @@ def upload_images(images):
     for image in images:
         try:
             name = image["name"]
-            image_data_uri = image["image"]  # Get the full string (might have prefix)
+            image_data = image["image"]  # Get the full string (URL or base64)
 
-            # --- Strip Data URI prefix if present ---
-            if "," in image_data_uri:
-                # Find the comma and take everything after it
-                base64_data = image_data_uri.split(",", 1)[1]
+            # Determine if this is a URL or base64 data
+            is_url = image_data.startswith(("http://", "https://"))
+
+            if is_url:
+                # Handle URL-based image
+                print(f"worker-comfyui - Downloading image from URL: {image_data}")
+                response = requests.get(image_data, timeout=30)
+                response.raise_for_status()
+                blob = response.content
             else:
-                # Assume it's already pure base64
-                base64_data = image_data_uri
-            # --- End strip ---
+                # Handle base64 encoded image
+                # --- Strip Data URI prefix if present ---
+                if "," in image_data:
+                    # Find the comma and take everything after it
+                    base64_data = image_data.split(",", 1)[1]
+                else:
+                    # Assume it's already pure base64
+                    base64_data = image_data
+                # --- End strip ---
 
-            blob = base64.b64decode(base64_data)  # Decode the cleaned data
+                blob = base64.b64decode(base64_data)  # Decode the cleaned data
 
             # Prepare the form data
             files = {
@@ -513,8 +529,8 @@ def upload_image(job_id, file_path):
 
             s3 = boto3.client("s3", **s3_client_kwargs)
 
-            # Upload the file with a public-read ACL
-            s3.upload_file(file_path, bucket, key, ExtraArgs={"ACL": "public-read"})
+            # Upload the file
+            s3.upload_file(file_path, bucket, key)
 
             # Construct a public URL (best-effort; exact URL form depends on provider)
             if endpoint.endswith("/"):
