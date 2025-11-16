@@ -109,15 +109,17 @@ class TestRunpodWorkerComfy(unittest.TestCase):
     def test_bucket_endpoint_not_configured(self, mock_upload_image, mock_exists):
         mock_exists.return_value = True
         mock_upload_image.return_value = "simulated_uploaded/image.png"
+        # Mock get_file_data to return bytes so the processor doesn't try HTTP/local read
+        with patch("handler.get_file_data", return_value=b"filebytes"):
+            outputs = {
+                "node_id": {"images": [{"filename": "ComfyUI_00001_.png", "subfolder": ""}]}
+            }
+            job_id = "123"
 
-        outputs = {
-            "node_id": {"images": [{"filename": "ComfyUI_00001_.png", "subfolder": ""}]}
-        }
-        job_id = "123"
+            files, errors = handler.process_output_files(outputs, job_id)
 
-        result = handler.process_output_images(outputs, job_id)
-
-        self.assertEqual(result["status"], "success")
+            self.assertEqual(len(files), 1)
+            self.assertEqual(errors, [])
 
     @patch("handler.os.path.exists")
     @patch("handler.upload_image")
@@ -136,22 +138,20 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         mock_upload_image.return_value = "http://example.com/uploaded/image.png"
 
         # Define the outputs and job_id for the test
-        outputs = {
-            "node_id": {
-                "images": [{"filename": "ComfyUI_00001_.png", "subfolder": "test"}]
+        with patch("handler.get_file_data", return_value=b"filebytes"):
+            outputs = {
+                "node_id": {
+                    "images": [{"filename": "ComfyUI_00001_.png", "subfolder": "test"}]
+                }
             }
-        }
-        job_id = "123"
+            job_id = "123"
 
-        # Call the function under test
-        result = handler.process_output_images(outputs, job_id)
+            files, errors = handler.process_output_files(outputs, job_id)
 
-        # Assertions
-        self.assertEqual(result["status"], "success")
-        self.assertEqual(result["message"], "http://example.com/uploaded/image.png")
-        mock_upload_image.assert_called_once_with(
-            job_id, "./test_resources/images/test/ComfyUI_00001_.png"
-        )
+            self.assertEqual(len(files), 1)
+            self.assertEqual(errors, [])
+            self.assertEqual(files[0]["type"], "s3_url")
+            self.assertEqual(files[0]["data"], "http://example.com/uploaded/image.png")
 
     @patch("handler.os.path.exists")
     @patch("handler.upload_image")
@@ -177,12 +177,12 @@ class TestRunpodWorkerComfy(unittest.TestCase):
             "node_id": {"images": [{"filename": "ComfyUI_00001_.png", "subfolder": ""}]}
         }
         job_id = "123"
+        with patch("handler.get_file_data", return_value=b"filebytes"):
+            files, errors = handler.process_output_files(outputs, job_id)
 
-        result = handler.process_output_images(outputs, job_id)
-
-        # Check if the image was saved to the 'simulated_uploaded' directory
-        self.assertIn("simulated_uploaded", result["message"])
-        self.assertEqual(result["status"], "success")
+            self.assertEqual(len(files), 1)
+            self.assertEqual(files[0]["type"], "s3_url")
+            self.assertIn("simulated_uploaded", files[0]["data"])
 
     @patch("handler.requests.post")
     def test_upload_images_successful(self, mock_post):
@@ -194,8 +194,7 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         test_image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
 
         images = [{"name": "test_image.png", "image": test_image_data}]
-
-        responses = handler.upload_images(images)
+        responses = handler.upload_files(images)
 
         self.assertEqual(len(responses), 3)
         self.assertEqual(responses["status"], "success")
@@ -212,8 +211,7 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         test_image_data = base64.b64encode(b"Test Image Data").decode("utf-8")
 
         images = [{"name": "test_image.png", "image": test_image_data}]
-
-        responses = handler.upload_images(images)
+        responses = handler.upload_files(images)
 
         self.assertEqual(len(responses), 3)
         self.assertEqual(responses["status"], "error")
