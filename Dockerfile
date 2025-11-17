@@ -6,7 +6,7 @@ FROM ${BASE_IMAGE} AS base
 
 # Build arguments for this stage with sensible defaults for standalone builds
 ARG COMFYUI_VERSION=latest
-ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+ARG PYTORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
 
 # Prevents prompts from packages asking for user input during installation
 ENV DEBIAN_FRONTEND=noninteractive
