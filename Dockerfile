@@ -1,14 +1,12 @@
 # Build argument for base image selection
-ARG BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04
 
 # Stage 1: Base image with common dependencies
 FROM ${BASE_IMAGE} AS base
 
 # Build arguments for this stage with sensible defaults for standalone builds
 ARG COMFYUI_VERSION=latest
-ARG CUDA_VERSION_FOR_COMFY
-ARG ENABLE_PYTORCH_UPGRADE=false
-ARG PYTORCH_INDEX_URL
+ARG PYTORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
 
 # Prevents prompts from packages asking for user input during installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -49,15 +47,19 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 # Use the virtual environment for all subsequent commands
 ENV PATH="/opt/venv/bin:${PATH}"
 
+RUN uv pip install \
+    torch \
+    torchvision \
+    torchaudio \
+    --index-url ${PYTORCH_CUDA_INDEX_URL} \
+    --upgrade \
+    --break-system-packages
+
 # Install comfy-cli + dependencies needed by it to install ComfyUI
 RUN uv pip install comfy-cli pip setuptools wheel
 
 # Install ComfyUI
-RUN if [ -n "${CUDA_VERSION_FOR_COMFY}" ]; then \
-      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --cuda-version "${CUDA_VERSION_FOR_COMFY}" --nvidia; \
-    else \
-      /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia; \
-    fi
+RUN /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
 
 # Change working directory to ComfyUI
 WORKDIR /comfyui
