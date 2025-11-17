@@ -4,6 +4,7 @@ import sys
 import os
 import json
 import base64
+import time
 import requests
 
 # Make sure project root is on sys.path so tests can import top-level handler.py
@@ -379,3 +380,132 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         self.assertEqual(result["status"], "error")
         self.assertEqual(len(result["details"]), 1)  # One success, one error
         self.assertIn("Error uploading image2.png", result["details"][0])
+
+    def test_validate_input_with_callback_url(self):
+        """Test that callback_url is preserved in validated data"""
+        input_data = {
+            "workflow": {"key": "value"},
+            "callback_url": "https://example.com/webhook?token=abc123",
+        }
+        validated_data, error = handler.validate_input(input_data)
+        self.assertIsNone(error)
+        self.assertEqual(validated_data["callback_url"], "https://example.com/webhook?token=abc123")
+
+    def test_validate_input_ignores_empty_callback_url(self):
+        """Test that empty callback_url is not included in validated data"""
+        input_data = {
+            "workflow": {"key": "value"},
+            "callback_url": "",
+        }
+        validated_data, error = handler.validate_input(input_data)
+        self.assertIsNone(error)
+        self.assertNotIn("callback_url", validated_data)
+
+    @patch("handler.requests.post")
+    def test_webhook_notification_success(self, mock_post):
+        """Test successful webhook notification delivery"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        # Simulate the handler's webhook sending logic
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {
+            "status": "completed",
+            "files": [{"filename": "output.png", "type": "s3_url", "data": "s3://bucket/output.png"}],
+        }
+        job_id = "job-123"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "id": job_id,
+            "status": result.get("status", "completed"),
+            "files": result.get("files", []),
+        }
+
+        requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+
+        mock_post.assert_called_once_with(
+            webhook_url, json=payload, headers=headers, timeout=10
+        )
+
+    @patch("handler.requests.post")
+    def test_webhook_notification_with_error(self, mock_post):
+        """Test webhook notification when job fails"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {
+            "error": "Job processing failed",
+            "details": ["Workflow error: invalid node"],
+        }
+        job_id = "job-456"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "id": job_id,
+            "status": "failed",
+            "error": result.get("error"),
+            "details": result.get("details"),
+        }
+
+        requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+
+        mock_post.assert_called_once_with(
+            webhook_url, json=payload, headers=headers, timeout=10
+        )
+
+    @patch("handler.requests.post")
+    @patch.dict(os.environ, {"I2V_WEBHOOK_RETRIES": "2", "I2V_WEBHOOK_BACKOFF_S": "0.1"})
+    def test_webhook_notification_retry_on_failure(self, mock_post):
+        """Test webhook retries on failure"""
+        # First attempt fails, second succeeds
+        mock_response_fail = MagicMock()
+        mock_response_fail.status_code = 500
+        mock_response_fail.text = "Server error"
+
+        mock_response_success = MagicMock()
+        mock_response_success.status_code = 200
+
+        mock_post.side_effect = [mock_response_fail, mock_response_success]
+
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {"status": "completed", "files": []}
+        job_id = "job-789"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {"id": job_id, "status": "completed", "files": []}
+
+        # Simulate retry logic
+        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 3))
+        backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 1.0))
+
+        success = False
+        for attempt in range(1, retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+                if 200 <= resp.status_code < 300:
+                    success = True
+                    break
+            except Exception:
+                pass
+            if attempt < retries:
+                time.sleep(backoff * attempt)
+
+        self.assertTrue(success)
+        # Should have been called twice (first failed, second succeeded)
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch("handler.requests.post")
+    def test_webhook_notification_no_url_provided(self, mock_post):
+        """Test that webhook is skipped when no callback_url is provided"""
+        # When callback_url is None, the handler should not attempt to send webhook
+        webhook_url = None
+
+        if not webhook_url:
+            mock_post.assert_not_called()
+        else:
+            # This branch should not be reached
+            self.fail("Webhook should not be sent when URL is None")

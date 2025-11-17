@@ -136,6 +136,7 @@ def validate_input(job_input):
                           - 'workflow': Required workflow definition
                           - 'images': Optional list of images (base64 encoded or URLs)
                           - 'comfy_org_api_key': Optional API key for Comfy.org API Nodes
+                          - 'callback_url': Optional webhook URL for job completion notification
 
     Returns:
         tuple: A tuple containing the validated data and an error message, if any.
@@ -175,6 +176,10 @@ def validate_input(job_input):
     validated = {"workflow": workflow, "images": images}
     if comfy_org_api_key is not None:
         validated["comfy_org_api_key"] = comfy_org_api_key
+
+    callback_url = job_input.get("callback_url")
+    if isinstance(callback_url, str) and callback_url.strip() != "":
+        validated["callback_url"] = callback_url
 
     return validated, None
 
@@ -829,6 +834,57 @@ def handler(job):
 
     total_outputs = len(output_files)
     print(f"worker-comfyui - Job completed. Returning {total_outputs} output(s).")
+    # --- Outbound webhook notification (optional) ---
+    webhook_url = validated_data.get("callback_url")
+
+    def _send_webhook_notification(job_id, result, url=webhook_url):
+        if not url:
+            return False
+        print(f"worker-comfyui - Sending webhook notification to {url}.")
+
+        headers = {"Content-Type": "application/json"}
+
+        payload = {"id": job_id}
+        # Choose a status for the webhook based on result
+        if result.get("error"):
+            payload["status"] = "failed"
+            payload["error"] = result.get("error")
+            if "details" in result:
+                payload["details"] = result.get("details")
+        else:
+            payload["status"] = result.get("status", "completed")
+
+        # Attach discovered files (s3 URLs or base64 blobs) for consumer convenience
+        if "files" in result and isinstance(result["files"], list):
+            payload["files"] = result["files"]
+
+        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 3))
+        backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 1.0))
+
+        for attempt in range(1, retries + 1):
+            try:
+                print(f"worker-comfyui - Sending webhook notification to {url} (attempt {attempt}/{retries})")
+                resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                if 200 <= resp.status_code < 300:
+                    print(f"worker-comfyui - Webhook delivered successfully (status {resp.status_code}).")
+                    return True
+                else:
+                    print(f"worker-comfyui - Webhook responded with status {resp.status_code}: {resp.text}")
+            except Exception as e:
+                print(f"worker-comfyui - Error sending webhook (attempt {attempt}): {e}")
+
+            if attempt < retries:
+                time.sleep(backoff * attempt)
+
+        print("worker-comfyui - All webhook attempts failed.")
+        return False
+
+    try:
+        # Best-effort: notify external system about completion
+        _send_webhook_notification(job_id, final_result)
+    except Exception as e:
+        print(f"worker-comfyui - Unexpected error notifying webhook: {e}")
+
     return final_result
 
 
