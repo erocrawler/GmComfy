@@ -105,7 +105,7 @@ WORKDIR /comfyui
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
 
 # Install custom nodes and pre-cache models
-RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF
+RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF ComfyUI-WanVideoWrapper
 
 # Return to root
 WORKDIR /
