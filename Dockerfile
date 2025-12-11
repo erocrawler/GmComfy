@@ -16,7 +16,7 @@ ENV PIP_PREFER_BINARY=1
 ENV PYTHONUNBUFFERED=1
 # Speed up some cmake builds
 ENV CMAKE_BUILD_PARALLEL_LEVEL=8
-ARG USE_FLASH_ATTN=false
+ARG USE_FLASH_ATTN=true
 
 # Install Python, git and other necessary tools
 RUN apt-get update && apt-get install -y \
@@ -111,7 +111,7 @@ WORKDIR /comfyui
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
 
 # Install custom nodes and pre-cache models
-RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF ComfyUI-WanVideoWrapper comfyui-multigpu
+RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF comfyui-multigpu
 
 # Return to root
 WORKDIR /
