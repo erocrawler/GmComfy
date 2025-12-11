@@ -60,7 +60,7 @@ RUN uv pip install \
 # Also install Python runtime dependencies for the handler
 RUN uv pip install \
     comfy-cli pip setuptools wheel packaging ninja \
-    runpod requests websocket-client boto3 \
+    "runpod==1.7.13" requests websocket-client boto3 \
     "pycares==4.11.0" \
     --break-system-packages
     
