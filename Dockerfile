@@ -57,8 +57,13 @@ RUN uv pip install \
     --break-system-packages
 
 # Install comfy-cli + dependencies needed by it to install ComfyUI
-RUN uv pip install comfy-cli pip setuptools wheel packaging ninja
-
+# Also install Python runtime dependencies for the handler
+RUN uv pip install \
+    comfy-cli pip setuptools wheel packaging ninja \
+    runpod requests websocket-client boto3 \
+    "pycares==4.11.0" \
+    --break-system-packages
+    
 # 2. Install the Flash Attention Wheel
 RUN uv pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
 
@@ -73,11 +78,6 @@ ADD src/extra_model_paths.yaml ./
 
 # Go back to the root
 WORKDIR /
-
-# runpod requires newer version of these deps
-RUN uv pip install --upgrade pycares aiodns
-# Install Python runtime dependencies for the handler
-RUN uv pip install runpod requests websocket-client boto3
 
 # Add application code and scripts
 ADD src/start.sh handler.py test_input.json ./
