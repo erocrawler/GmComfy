@@ -74,11 +74,6 @@ WORKDIR /
 # Install Python runtime dependencies for the handler
 RUN uv pip install runpod requests websocket-client boto3
 
-# Install FlashAttention if requested:
-RUN if [ "$USE_FLASH_ATTN" = "true" ]; then \
-        uv pip install --no-build-isolation flash-attn; \
-    fi
-
 # Add application code and scripts
 ADD src/start.sh handler.py test_input.json ./
 RUN chmod +x /start.sh
@@ -111,7 +106,7 @@ WORKDIR /comfyui
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
 
 # Install custom nodes and pre-cache models
-RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF comfyui-multigpu
+RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF ComfyUI-WanVideoWrapper comfyui-multigpu
 
 # Return to root
 WORKDIR /
