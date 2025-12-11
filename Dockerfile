@@ -1,5 +1,5 @@
 # Build argument for base image selection
-ARG BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 
 # Stage 1: Base image with common dependencies
 FROM ${BASE_IMAGE} AS base
@@ -30,7 +30,6 @@ RUN apt-get update && apt-get install -y \
     libxext6 \
     libxrender1 \
     ffmpeg \
-    nvidia-cuda-toolkit \
     build-essential \
     python3-dev \
     && ln -sf /usr/bin/python3.12 /usr/bin/python \
@@ -48,16 +47,20 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 # Use the virtual environment for all subsequent commands
 ENV PATH="/opt/venv/bin:${PATH}"
 
+# Install PyTorch 2.8
 RUN uv pip install \
-    torch \
+    "torch>=2.8.0,<2.9.0" \
+    "torchaudio>=2.8.0,<2.9.0" \
     torchvision \
-    torchaudio \
     --index-url ${PYTORCH_CUDA_INDEX_URL} \
     --upgrade \
     --break-system-packages
 
 # Install comfy-cli + dependencies needed by it to install ComfyUI
-RUN uv pip install comfy-cli pip setuptools wheel
+RUN uv pip install comfy-cli pip setuptools wheel packaging ninja
+
+# 2. Install the Flash Attention Wheel
+RUN uv pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
 
 # Install ComfyUI
 RUN /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
@@ -71,6 +74,8 @@ ADD src/extra_model_paths.yaml ./
 # Go back to the root
 WORKDIR /
 
+# runpod requires newer version of these deps
+RUN uv pip install --upgrade pycares aiodns
 # Install Python runtime dependencies for the handler
 RUN uv pip install runpod requests websocket-client boto3
 
