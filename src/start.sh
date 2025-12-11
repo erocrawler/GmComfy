@@ -34,14 +34,25 @@ else
     SAGE_ATTENTION_ARG=""
 fi
 
+# Support enabling flash attention via env var `USE_FLASH_ATTN`
+# Usage: set USE_FLASH_ATTN=true in environment to enable.
+USE_FLASH_ATTN=${USE_FLASH_ATTN:-false}
+
+if [ "$USE_FLASH_ATTN" = "true" ]; then
+    echo "worker-comfyui: Flash attention enabled"
+    FLASH_ATTN_ARG="--use-flash-attention"
+else
+    FLASH_ATTN_ARG=""
+fi
+
 # Serve the API and don't shutdown the container
 if [ "$SERVE_API_LOCALLY" == "true" ]; then
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata ${HIGH_VRAM_ARG} ${SAGE_ATTENTION_ARG} --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
+    python -u /comfyui/main.py --disable-auto-launch --disable-metadata ${HIGH_VRAM_ARG} ${SAGE_ATTENTION_ARG} ${FLASH_ATTN_ARG} --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
 
     echo "worker-comfyui: Starting RunPod Handler"
     python -u /handler.py --rp_serve_api --rp_api_host=0.0.0.0
 else
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata ${HIGH_VRAM_ARG} ${SAGE_ATTENTION_ARG} --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
+    python -u /comfyui/main.py --disable-auto-launch --disable-metadata ${HIGH_VRAM_ARG} ${SAGE_ATTENTION_ARG} ${FLASH_ATTN_ARG} --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
 
     echo "worker-comfyui: Starting RunPod Handler"
     python -u /handler.py
