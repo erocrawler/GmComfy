@@ -11,3 +11,4 @@ runpod_worker_comfy:
   vae: models/vae/
   unet: models/unet/
   text_encoders: models/text_encoders/
+  diffusion_models: models/diffusion_models/

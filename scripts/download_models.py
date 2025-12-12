@@ -28,6 +28,8 @@ MODELS = {
             "size_gb": 11.4,
         }
     },
+
+    
     
     # VAE
     "vae": {
@@ -35,6 +37,20 @@ MODELS = {
             "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
             "path": "models/vae",
             "size_gb": 0.3,
+        }
+    },
+    
+    # Diffusion Models
+    "diffusion_models": {
+        "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors": {
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+            "path": "models/diffusion_models",
+            "size_gb": 7.3,
+        },
+        "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors": {
+            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+            "path": "models/diffusion_models",
+            "size_gb": 7.3,
         }
     },
     
@@ -263,7 +279,7 @@ def main():
         "--categories",
         type=str,
         nargs="+",
-        choices=["clip", "vae", "unet", "loras"],
+        choices=["clip", "vae", "diffusion_models", "unet", "loras"],
         help="Specific categories to download (default: all)"
     )
     parser.add_argument(
