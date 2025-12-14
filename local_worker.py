@@ -25,17 +25,21 @@ logger = logging.getLogger('local-worker')
 # Default configuration
 DEFAULT_API_URL = os.environ.get('WORKER_API_URL', 'http://localhost:5173')
 DEFAULT_POLL_INTERVAL = int(os.environ.get('WORKER_POLL_INTERVAL', 5))
+DEFAULT_WORKER_SECRET = os.environ.get('WORKER_TASK_SECRET')
 
 
 class LocalWorker:
     """Worker that polls for and processes local jobs"""
     
-    def __init__(self, api_url, poll_interval=5):
+    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None):
         self.api_url = api_url.rstrip('/')
         self.poll_interval = poll_interval
+        self.worker_secret = worker_secret
         self.task_url = f"{self.api_url}/api/worker/task"
         logger.info(f"Initialized worker with API URL: {self.api_url}")
         logger.info(f"Poll interval: {self.poll_interval}s")
+        if not self.worker_secret:
+            logger.warning("No WORKER_TASK_SECRET provided; task endpoint may reject requests")
     
     def fetch_task(self):
         """
@@ -46,7 +50,10 @@ class LocalWorker:
         """
         try:
             logger.debug(f"Polling for tasks at {self.task_url}")
-            response = requests.get(self.task_url, timeout=10)
+            headers = {}
+            if self.worker_secret:
+                headers['x-worker-secret'] = self.worker_secret
+            response = requests.get(self.task_url, headers=headers, timeout=10)
             
             if response.status_code == 404:
                 # No tasks available
@@ -163,6 +170,11 @@ def main():
         help=f'Poll interval in seconds (default: {DEFAULT_POLL_INTERVAL})'
     )
     parser.add_argument(
+        '--worker-secret',
+        default=DEFAULT_WORKER_SECRET,
+        help='Shared secret for /api/worker/task authentication (env WORKER_TASK_SECRET)'
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
@@ -177,7 +189,8 @@ def main():
     # Create and run worker
     worker = LocalWorker(
         api_url=args.api_url,
-        poll_interval=args.poll_interval
+        poll_interval=args.poll_interval,
+        worker_secret=args.worker_secret
     )
     
     try:
