@@ -91,20 +91,14 @@ class LocalWorker:
         job_id = task.get('id')
         logger.info(f"Processing task {job_id}")
         
-        # Build ComfyUI job input from task data
-        # The task contains: id, job_id, original_image_url, prompt, callback_url, etc.
-        job_input = {
-            'workflow': task.get('workflow', {}),
-            'callback_url': task.get('callback_url'),
-        }
+        # The task already contains the complete workflow payload from buildWorkflow()
+        # It has structure: { id, job_id, input: { workflow: {...}, images: [...], callback_url: ... } }
+        # We just need to pass it to the handler in the right format
         
-        # If there's an image URL, add it to the images array
-        if task.get('original_image_url'):
-            image_filename = f"{job_id}.png"
-            job_input['images'] = [{
-                'name': image_filename,
-                'image': task['original_image_url']
-            }]
+        job_input = task.get('input')
+        if not job_input:
+            logger.error(f"Task {job_id} missing 'input' field")
+            return {'error': 'Task missing input field'}
         
         # Create a job object that matches the handler's expected format
         job = {
@@ -125,7 +119,25 @@ class LocalWorker:
             
         except Exception as e:
             logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
-            return {'error': f"Processing error: {str(e)}"}
+            error_result = {'error': f"Processing error: {str(e)}"}
+            
+            # Try to send failure notification to webhook
+            callback_url = job_input.get('callback_url') if isinstance(job_input, dict) else None
+            if callback_url:
+                try:
+                    import requests
+                    headers = {'Content-Type': 'application/json'}
+                    payload = {
+                        'id': job_id,
+                        'status': 'failed',
+                        'error': str(e)
+                    }
+                    requests.post(callback_url, json=payload, headers=headers, timeout=10)
+                    logger.info(f"Sent failure notification for job {job_id}")
+                except Exception as webhook_err:
+                    logger.error(f"Failed to send failure webhook for job {job_id}: {webhook_err}")
+            
+            return error_result
     
     def run(self):
         """Main worker loop"""
