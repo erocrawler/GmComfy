@@ -171,11 +171,16 @@ def validate_input(job_input):
 
     # Optional: API key for Comfy.org API Nodes, passed per-request
     comfy_org_api_key = job_input.get("comfy_org_api_key")
+    
+    # Optional: Node weights for progress calculation
+    node_weights = job_input.get("node_weights")
 
     # Build validated response. Only include comfy_org_api_key if it was provided
     validated = {"workflow": workflow, "images": images}
     if comfy_org_api_key is not None:
         validated["comfy_org_api_key"] = comfy_org_api_key
+    if node_weights is not None and isinstance(node_weights, dict):
+        validated["node_weights"] = node_weights
 
     callback_url = job_input.get("callback_url")
     if isinstance(callback_url, str) and callback_url.strip() != "":
@@ -632,6 +637,7 @@ def handler(job):
     # Extract validated data
     workflow = validated_data["workflow"]
     input_images = validated_data.get("images")
+    node_weights = validated_data.get("node_weights")
 
     # Webhook helper using validated callback_url only
     webhook_url = validated_data.get("callback_url") if isinstance(validated_data, dict) else None
@@ -769,16 +775,27 @@ def handler(job):
                 raise ValueError(f"Unexpected error queuing workflow: {e}")
 
         # Wait for execution completion via WebSocket
-        print(f"worker-comfyui - Waiting for workflow execution ({prompt_id})...")
-        execution_done = False
-        last_progress_webhook = 0
-        progress_webhook_interval = float(os.environ.get("PROGRESS_WEBHOOK_INTERVAL_S", 3.0))
+        # Use node weights from input (provided by server) or fallback to equal weights
+        # Weights reflect actual compute cost of each node for accurate progress
+        if node_weights is None:
+            node_weights = {}
+        default_weight = 1.0  # Light nodes (loaders, preprocessors, etc.)
         
-        # Track overall workflow progress
-        total_nodes = len(workflow)
-        completed_nodes = 0
+        # Calculate total weight
+        total_weight = sum(node_weights.get(node_id, default_weight) for node_id in workflow.keys())
+        print(f"worker-comfyui - Using weighted progress with {len(node_weights)} custom weights (total weight: {total_weight:.1f})")
+        
+        # Track overall workflow progress with weights
+        completed_weight = 0.0
+        current_node_id = None
+        current_node_weight = 0.0
         current_node_progress = 0.0
         executing_nodes = set()
+        execution_done = False
+        
+        # Progress webhook throttling
+        last_progress_webhook = time.time()
+        progress_webhook_interval = 2.0  # seconds
         
         while True:
             try:
@@ -804,25 +821,31 @@ def handler(job):
                             # New node started executing
                             if node_id not in executing_nodes:
                                 executing_nodes.add(node_id)
-                                if len(executing_nodes) > 1:
-                                    # Previous node completed
-                                    completed_nodes += 1
+                                if current_node_id is not None:
+                                    # Previous node completed - add its full weight
+                                    completed_weight += current_node_weight
+                                
+                                # Set up new current node
+                                current_node_id = node_id
+                                current_node_weight = node_weights.get(node_id, default_weight)
                                 current_node_progress = 0.0
-                                print(f"worker-comfyui - Executing node {node_id} ({completed_nodes + 1}/{total_nodes})")
+                                
+                                node_desc = " (HEAVY)" if current_node_weight > 10 else ""
+                                print(f"worker-comfyui - Executing node {node_id}{node_desc} ({len(executing_nodes)}/{len(workflow)})")
                     elif message.get("type") == "progress":
-                        # ComfyUI sends progress updates with value/max for current node
                         data = message.get("data", {})
                         value = data.get("value", 0)
-                        max_val = data.get("max", 1)
+                        max_val = data.get("max", 0)
                         node = data.get("node")
                         
                         if max_val > 0:
                             # Current node progress (0.0 to 1.0)
                             current_node_progress = value / max_val
                             
-                            # Calculate overall workflow progress
-                            if total_nodes > 0:
-                                overall_progress = ((completed_nodes + current_node_progress) / total_nodes) * 100
+                            # Calculate overall workflow progress using weighted approach
+                            if total_weight > 0:
+                                current_progress_weight = completed_weight + (current_node_weight * current_node_progress)
+                                overall_progress = (current_progress_weight / total_weight) * 100
                             else:
                                 overall_progress = 0
                             
@@ -836,8 +859,8 @@ def handler(job):
                                         "status": "processing",
                                         "progress": {
                                             "percentage": round(overall_progress, 1),
-                                            "completed_nodes": completed_nodes,
-                                            "total_nodes": total_nodes,
+                                            "completed_nodes": len(executing_nodes),
+                                            "total_nodes": len(workflow),
                                             "current_node": node,
                                             "current_node_progress": round(current_node_progress * 100, 1)
                                         }
