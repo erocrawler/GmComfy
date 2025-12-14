@@ -626,11 +626,78 @@ def handler(job):
     # Make sure that the input is valid
     validated_data, error_message = validate_input(job_input)
     if error_message:
+        # Validation failed; skip webhook because callback URL is untrusted
         return {"error": error_message}
 
     # Extract validated data
     workflow = validated_data["workflow"]
     input_images = validated_data.get("images")
+
+    # Webhook helper using validated callback_url only
+    webhook_url = validated_data.get("callback_url") if isinstance(validated_data, dict) else None
+
+    def _send_webhook_notification(job_id, result, url=webhook_url):
+        if not url:
+            return False
+        
+        headers = {"Content-Type": "application/json"}
+
+        payload = {"id": job_id}
+        # Choose a status for the webhook based on result
+        if result.get("error"):
+            payload["status"] = "failed"
+            payload["error"] = result.get("error")
+            if "details" in result:
+                payload["details"] = result.get("details")
+        else:
+            payload["status"] = result.get("status", "completed")
+
+        # Attach progress information for processing status
+        if "progress" in result and isinstance(result["progress"], dict):
+            payload["progress"] = result["progress"]
+
+        # Attach discovered files (s3 URLs or base64 blobs) for consumer convenience
+        if "files" in result and isinstance(result["files"], list):
+            payload["files"] = result["files"]
+
+        # Progress notifications don't retry (fire-and-forget)
+        is_progress = result.get("status") == "processing"
+        if is_progress:
+            try:
+                print(f"worker-comfyui - Sending progress webhook to {url}.")
+                resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                if 200 <= resp.status_code < 300:
+                    print(f"worker-comfyui - Progress webhook delivered (status {resp.status_code}).")
+                    return True
+                else:
+                    print(f"worker-comfyui - Progress webhook responded with status {resp.status_code}.")
+                    return False
+            except Exception as e:
+                print(f"worker-comfyui - Error sending progress webhook: {e}")
+                return False
+
+        # Final status/error notifications use retry logic
+        print(f"worker-comfyui - Sending webhook notification to {url}.")
+        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 3))
+        backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 1.0))
+
+        for attempt in range(1, retries + 1):
+            try:
+                print(f"worker-comfyui - Sending webhook notification to {url} (attempt {attempt}/{retries})")
+                resp = requests.post(url, json=payload, headers=headers, timeout=10)
+                if 200 <= resp.status_code < 300:
+                    print(f"worker-comfyui - Webhook delivered successfully (status {resp.status_code}).")
+                    return True
+                else:
+                    print(f"worker-comfyui - Webhook responded with status {resp.status_code}: {resp.text}")
+            except Exception as e:
+                print(f"worker-comfyui - Error sending webhook (attempt {attempt}): {e}")
+
+            if attempt < retries:
+                time.sleep(backoff * attempt)
+
+        print("worker-comfyui - All webhook attempts failed.")
+        return False
 
     # Make sure that the ComfyUI HTTP API is available before proceeding
     if not check_server(
@@ -638,19 +705,29 @@ def handler(job):
         COMFY_API_AVAILABLE_MAX_RETRIES,
         COMFY_API_AVAILABLE_INTERVAL_MS,
     ):
-        return {
+        err_result = {
             "error": f"ComfyUI server ({COMFY_HOST}) not reachable after multiple retries."
         }
+        try:
+            _send_webhook_notification(job_id, err_result)
+        except Exception:
+            pass
+        return err_result
 
     # Upload input images if they exist
     if input_images:
         upload_result = upload_input_files(input_images)
         if upload_result["status"] == "error":
             # Return upload errors
-            return {
+            err_result = {
                 "error": "Failed to upload one or more input images",
                 "details": upload_result["details"],
             }
+            try:
+                _send_webhook_notification(job_id, err_result)
+            except Exception:
+                pass
+            return err_result
 
     ws = None
     client_id = str(uuid.uuid4())
@@ -694,6 +771,15 @@ def handler(job):
         # Wait for execution completion via WebSocket
         print(f"worker-comfyui - Waiting for workflow execution ({prompt_id})...")
         execution_done = False
+        last_progress_webhook = 0
+        progress_webhook_interval = float(os.environ.get("PROGRESS_WEBHOOK_INTERVAL_S", 3.0))
+        
+        # Track overall workflow progress
+        total_nodes = len(workflow)
+        completed_nodes = 0
+        current_node_progress = 0.0
+        executing_nodes = set()
+        
         while True:
             try:
                 out = ws.recv()
@@ -705,16 +791,61 @@ def handler(job):
                             f"worker-comfyui - Status update: {status_data.get('exec_info', {}).get('queue_remaining', 'N/A')} items remaining in queue"
                         )
                     elif message.get("type") == "executing":
+                        # Track node execution for overall progress
                         data = message.get("data", {})
-                        if (
-                            data.get("node") is None
-                            and data.get("prompt_id") == prompt_id
-                        ):
-                            print(
-                                f"worker-comfyui - Execution finished for prompt {prompt_id}"
-                            )
+                        node_id = data.get("node")
+                        
+                        if node_id is None and data.get("prompt_id") == prompt_id:
+                            # Execution finished
+                            print(f"worker-comfyui - Execution finished for prompt {prompt_id}")
                             execution_done = True
                             break
+                        elif node_id is not None:
+                            # New node started executing
+                            if node_id not in executing_nodes:
+                                executing_nodes.add(node_id)
+                                if len(executing_nodes) > 1:
+                                    # Previous node completed
+                                    completed_nodes += 1
+                                current_node_progress = 0.0
+                                print(f"worker-comfyui - Executing node {node_id} ({completed_nodes + 1}/{total_nodes})")
+                    elif message.get("type") == "progress":
+                        # ComfyUI sends progress updates with value/max for current node
+                        data = message.get("data", {})
+                        value = data.get("value", 0)
+                        max_val = data.get("max", 1)
+                        node = data.get("node")
+                        
+                        if max_val > 0:
+                            # Current node progress (0.0 to 1.0)
+                            current_node_progress = value / max_val
+                            
+                            # Calculate overall workflow progress
+                            if total_nodes > 0:
+                                overall_progress = ((completed_nodes + current_node_progress) / total_nodes) * 100
+                            else:
+                                overall_progress = 0
+                            
+                            print(f"worker-comfyui - Overall progress: {overall_progress:.1f}% (node {node}: {current_node_progress * 100:.1f}%)")
+                            
+                            # Throttle webhook notifications
+                            current_time = time.time()
+                            if current_time - last_progress_webhook >= progress_webhook_interval:
+                                try:
+                                    progress_result = {
+                                        "status": "processing",
+                                        "progress": {
+                                            "percentage": round(overall_progress, 1),
+                                            "completed_nodes": completed_nodes,
+                                            "total_nodes": total_nodes,
+                                            "current_node": node,
+                                            "current_node_progress": round(current_node_progress * 100, 1)
+                                        }
+                                    }
+                                    _send_webhook_notification(job_id, progress_result)
+                                    last_progress_webhook = current_time
+                                except Exception as e:
+                                    print(f"worker-comfyui - Error sending progress webhook: {e}")
                     elif message.get("type") == "execution_error":
                         data = message.get("data", {})
                         if data.get("prompt_id") == prompt_id:
@@ -766,13 +897,23 @@ def handler(job):
             error_msg = f"Prompt ID {prompt_id} not found in history after execution."
             print(f"worker-comfyui - {error_msg}")
             if not errors:
-                return {"error": error_msg}
+                err_result = {"error": error_msg}
+                try:
+                    _send_webhook_notification(job_id, err_result)
+                except Exception:
+                    pass
+                return err_result
             else:
                 errors.append(error_msg)
-                return {
+                err_result = {
                     "error": "Job processing failed, prompt ID not found in history.",
                     "details": errors,
                 }
+                try:
+                    _send_webhook_notification(job_id, err_result)
+                except Exception:
+                    pass
+                return err_result
 
         prompt_history = history.get(prompt_id, {})
         outputs = prompt_history.get("outputs", {})
@@ -793,19 +934,39 @@ def handler(job):
     except websocket.WebSocketException as e:
         print(f"worker-comfyui - WebSocket Error: {e}")
         print(traceback.format_exc())
-        return {"error": f"WebSocket communication error: {e}"}
+        err_result = {"error": f"WebSocket communication error: {e}"}
+        try:
+            _send_webhook_notification(job_id, err_result)
+        except Exception:
+            pass
+        return err_result
     except requests.RequestException as e:
         print(f"worker-comfyui - HTTP Request Error: {e}")
         print(traceback.format_exc())
-        return {"error": f"HTTP communication error with ComfyUI: {e}"}
+        err_result = {"error": f"HTTP communication error with ComfyUI: {e}"}
+        try:
+            _send_webhook_notification(job_id, err_result)
+        except Exception:
+            pass
+        return err_result
     except ValueError as e:
         print(f"worker-comfyui - Value Error: {e}")
         print(traceback.format_exc())
-        return {"error": str(e)}
+        err_result = {"error": str(e)}
+        try:
+            _send_webhook_notification(job_id, err_result)
+        except Exception:
+            pass
+        return err_result
     except Exception as e:
         print(f"worker-comfyui - Unexpected Handler Error: {e}")
         print(traceback.format_exc())
-        return {"error": f"An unexpected error occurred: {e}"}
+        err_result = {"error": f"An unexpected error occurred: {e}"}
+        try:
+            _send_webhook_notification(job_id, err_result)
+        except Exception:
+            pass
+        return err_result
     finally:
         if ws and ws.connected:
             print(f"worker-comfyui - Closing websocket connection.")
@@ -823,7 +984,12 @@ def handler(job):
     # If there are no outputs at all and there were errors, surface failure
     if not output_files and errors:
         print(f"worker-comfyui - Job failed with no output files.")
-        return {"error": "Job processing failed", "details": errors}
+        err_result = {"error": "Job processing failed", "details": errors}
+        try:
+            _send_webhook_notification(job_id, err_result)
+        except Exception:
+            pass
+        return err_result
     # If there are no outputs and no errors, mark success but no files
     elif not output_files and not errors:
         print(
@@ -834,51 +1000,6 @@ def handler(job):
 
     total_outputs = len(output_files)
     print(f"worker-comfyui - Job completed. Returning {total_outputs} output(s).")
-    # --- Outbound webhook notification (optional) ---
-    webhook_url = validated_data.get("callback_url")
-
-    def _send_webhook_notification(job_id, result, url=webhook_url):
-        if not url:
-            return False
-        print(f"worker-comfyui - Sending webhook notification to {url}.")
-
-        headers = {"Content-Type": "application/json"}
-
-        payload = {"id": job_id}
-        # Choose a status for the webhook based on result
-        if result.get("error"):
-            payload["status"] = "failed"
-            payload["error"] = result.get("error")
-            if "details" in result:
-                payload["details"] = result.get("details")
-        else:
-            payload["status"] = result.get("status", "completed")
-
-        # Attach discovered files (s3 URLs or base64 blobs) for consumer convenience
-        if "files" in result and isinstance(result["files"], list):
-            payload["files"] = result["files"]
-
-        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 3))
-        backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 1.0))
-
-        for attempt in range(1, retries + 1):
-            try:
-                print(f"worker-comfyui - Sending webhook notification to {url} (attempt {attempt}/{retries})")
-                resp = requests.post(url, json=payload, headers=headers, timeout=10)
-                if 200 <= resp.status_code < 300:
-                    print(f"worker-comfyui - Webhook delivered successfully (status {resp.status_code}).")
-                    return True
-                else:
-                    print(f"worker-comfyui - Webhook responded with status {resp.status_code}: {resp.text}")
-            except Exception as e:
-                print(f"worker-comfyui - Error sending webhook (attempt {attempt}): {e}")
-
-            if attempt < retries:
-                time.sleep(backoff * attempt)
-
-        print("worker-comfyui - All webhook attempts failed.")
-        return False
-
     try:
         # Best-effort: notify external system about completion
         _send_webhook_notification(job_id, final_result)
