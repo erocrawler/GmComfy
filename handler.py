@@ -842,6 +842,13 @@ def handler(job):
                             # Current node progress (0.0 to 1.0)
                             current_node_progress = value / max_val
                             
+                            # Make sure we have the weight for the current node from the progress message
+                            # This handles cases where progress arrives before the executing message
+                            if node and (current_node_id != node):
+                                print(f"worker-comfyui - Progress for node {node} but current_node_id is {current_node_id}, updating")
+                                current_node_id = node
+                                current_node_weight = node_weights.get(node, default_weight)
+                            
                             # Calculate overall workflow progress using weighted approach
                             if total_weight > 0:
                                 current_progress_weight = completed_weight + (current_node_weight * current_node_progress)
@@ -849,7 +856,7 @@ def handler(job):
                             else:
                                 overall_progress = 0
                             
-                            print(f"worker-comfyui - Overall progress: {overall_progress:.1f}% (node {node}: {current_node_progress * 100:.1f}%)")
+                            print(f"worker-comfyui - Overall progress: {overall_progress:.1f}% (node {node}: {current_node_progress * 100:.1f}%, completed_weight: {completed_weight:.1f}, current_weight: {current_node_weight:.1f})")
                             
                             # Throttle webhook notifications
                             current_time = time.time()
