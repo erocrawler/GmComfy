@@ -26,18 +26,21 @@ logger = logging.getLogger('local-worker')
 DEFAULT_API_URL = os.environ.get('WORKER_API_URL', 'http://localhost:5173')
 DEFAULT_POLL_INTERVAL = int(os.environ.get('WORKER_POLL_INTERVAL', 5))
 DEFAULT_WORKER_SECRET = os.environ.get('WORKER_TASK_SECRET')
+DEFAULT_SENTINEL_FILE = os.environ.get('WORKER_SENTINEL_FILE', '.worker_stop')
 
 
 class LocalWorker:
     """Worker that polls for and processes local jobs"""
     
-    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None):
+    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, sentinel_file: str = DEFAULT_SENTINEL_FILE):
         self.api_url = api_url.rstrip('/')
         self.poll_interval = poll_interval
         self.worker_secret = worker_secret
+        self.sentinel_file = sentinel_file
         self.task_url = f"{self.api_url}/api/worker/task"
         logger.info(f"Initialized worker with API URL: {self.api_url}")
         logger.info(f"Poll interval: {self.poll_interval}s")
+        logger.info(f"Sentinel file: {self.sentinel_file}")
         if not self.worker_secret:
             logger.warning("No WORKER_TASK_SECRET provided; task endpoint may reject requests")
     
@@ -139,12 +142,27 @@ class LocalWorker:
             
             return error_result
     
+    def check_sentinel(self):
+        """Check if sentinel file exists (signal to stop worker)"""
+        return os.path.exists(self.sentinel_file)
+    
     def run(self):
         """Main worker loop"""
         logger.info("Starting local worker...")
+        logger.info(f"To gracefully stop the worker, create file: {self.sentinel_file}")
         
         while True:
             try:
+                # Check for sentinel file
+                if self.check_sentinel():
+                    logger.info(f"Sentinel file '{self.sentinel_file}' detected, shutting down gracefully...")
+                    try:
+                        os.remove(self.sentinel_file)
+                        logger.info(f"Removed sentinel file '{self.sentinel_file}'")
+                    except Exception as e:
+                        logger.warning(f"Could not remove sentinel file: {e}")
+                    break
+                
                 # Fetch next task
                 task = self.fetch_task()
                 
@@ -187,6 +205,11 @@ def main():
         help='Shared secret for /api/worker/task authentication (env WORKER_TASK_SECRET)'
     )
     parser.add_argument(
+        '--sentinel-file',
+        default=DEFAULT_SENTINEL_FILE,
+        help=f'Sentinel file path for graceful shutdown (default: {DEFAULT_SENTINEL_FILE})'
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
@@ -202,7 +225,8 @@ def main():
     worker = LocalWorker(
         api_url=args.api_url,
         poll_interval=args.poll_interval,
-        worker_secret=args.worker_secret
+        worker_secret=args.worker_secret,
+        sentinel_file=args.sentinel_file
     )
     
     try:
