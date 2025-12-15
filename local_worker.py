@@ -13,6 +13,8 @@ import time
 import requests
 import argparse
 import logging
+import shutil
+from pathlib import Path
 from handler import handler as comfy_handler
 
 # Configure logging
@@ -27,20 +29,32 @@ DEFAULT_API_URL = os.environ.get('WORKER_API_URL', 'http://localhost:5173')
 DEFAULT_POLL_INTERVAL = int(os.environ.get('WORKER_POLL_INTERVAL', 5))
 DEFAULT_WORKER_SECRET = os.environ.get('WORKER_TASK_SECRET')
 DEFAULT_SENTINEL_FILE = os.environ.get('WORKER_SENTINEL_FILE', '.worker_stop')
+DEFAULT_CLEANUP_ENABLED = os.environ.get('WORKER_CLEANUP_ENABLED', 'true').lower() == 'true'
+DEFAULT_CLEANUP_AGE_HOURS = float(os.environ.get('WORKER_CLEANUP_AGE_HOURS', 24))
+DEFAULT_OUTPUT_PATH = os.environ.get('COMFY_OUTPUT_PATH', '/workspace/runpod-slim/ComfyUI/output')
 
 
 class LocalWorker:
     """Worker that polls for and processes local jobs"""
     
-    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, sentinel_file: str = DEFAULT_SENTINEL_FILE):
+    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, sentinel_file: str = DEFAULT_SENTINEL_FILE,
+                 cleanup_enabled: bool = DEFAULT_CLEANUP_ENABLED, cleanup_age_hours: float = DEFAULT_CLEANUP_AGE_HOURS,
+                 output_path: str = DEFAULT_OUTPUT_PATH):
         self.api_url = api_url.rstrip('/')
         self.poll_interval = poll_interval
         self.worker_secret = worker_secret
         self.sentinel_file = sentinel_file
+        self.cleanup_enabled = cleanup_enabled
+        self.cleanup_age_hours = cleanup_age_hours
+        self.output_path = output_path
         self.task_url = f"{self.api_url}/api/worker/task"
         logger.info(f"Initialized worker with API URL: {self.api_url}")
         logger.info(f"Poll interval: {self.poll_interval}s")
         logger.info(f"Sentinel file: {self.sentinel_file}")
+        logger.info(f"Output cleanup: {'enabled' if self.cleanup_enabled else 'disabled'}")
+        if self.cleanup_enabled:
+            logger.info(f"Cleanup age threshold: {self.cleanup_age_hours} hours")
+            logger.info(f"Output path: {self.output_path}")
         if not self.worker_secret:
             logger.warning("No WORKER_TASK_SECRET provided; task endpoint may reject requests")
     
@@ -146,10 +160,68 @@ class LocalWorker:
         """Check if sentinel file exists (signal to stop worker)"""
         return os.path.exists(self.sentinel_file)
     
+    def cleanup_old_outputs(self):
+        """
+        Clean up old output files to prevent disk space exhaustion
+        Removes files older than cleanup_age_hours from the output directory
+        """
+        if not self.cleanup_enabled:
+            return
+        
+        try:
+            output_dir = Path(self.output_path)
+            if not output_dir.exists():
+                logger.debug(f"Output directory {self.output_path} does not exist, skipping cleanup")
+                return
+            
+            current_time = time.time()
+            age_threshold_seconds = self.cleanup_age_hours * 3600
+            deleted_count = 0
+            deleted_size = 0
+            
+            logger.debug(f"Starting cleanup of files older than {self.cleanup_age_hours} hours in {self.output_path}")
+            
+            # Walk through all files in output directory
+            for item in output_dir.rglob('*'):
+                if item.is_file():
+                    try:
+                        # Check file age
+                        file_age = current_time - item.stat().st_mtime
+                        
+                        if file_age > age_threshold_seconds:
+                            file_size = item.stat().st_size
+                            item.unlink()
+                            deleted_count += 1
+                            deleted_size += file_size
+                            logger.debug(f"Deleted old file: {item} (age: {file_age / 3600:.1f}h, size: {file_size / 1024 / 1024:.2f}MB)")
+                    except Exception as e:
+                        logger.warning(f"Error deleting file {item}: {e}")
+            
+            # Remove empty directories
+            for item in sorted(output_dir.rglob('*'), reverse=True):
+                if item.is_dir() and not any(item.iterdir()):
+                    try:
+                        item.rmdir()
+                        logger.debug(f"Removed empty directory: {item}")
+                    except Exception as e:
+                        logger.debug(f"Could not remove directory {item}: {e}")
+            
+            if deleted_count > 0:
+                logger.info(f"Cleanup complete: deleted {deleted_count} file(s), freed {deleted_size / 1024 / 1024:.2f} MB")
+            else:
+                logger.debug("Cleanup complete: no old files found")
+                
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}", exc_info=True)
+    
     def run(self):
         """Main worker loop"""
         logger.info("Starting local worker...")
         logger.info(f"To gracefully stop the worker, create file: {self.sentinel_file}")
+        
+        # Track last cleanup time
+        last_cleanup = 0
+        cleanup_interval = 3600  # Run cleanup every hour
         
         while True:
             try:
@@ -163,6 +235,12 @@ class LocalWorker:
                         logger.warning(f"Could not remove sentinel file: {e}")
                     break
                 
+                # Periodic cleanup
+                current_time = time.time()
+                if self.cleanup_enabled and (current_time - last_cleanup) >= cleanup_interval:
+                    self.cleanup_old_outputs()
+                    last_cleanup = current_time
+                
                 # Fetch next task
                 task = self.fetch_task()
                 
@@ -170,6 +248,10 @@ class LocalWorker:
                     # Process the task
                     # Note: handler.py automatically sends webhook notification to callback_url
                     result = self.process_task(task)
+                    
+                    # Cleanup after processing a task
+                    if self.cleanup_enabled:
+                        self.cleanup_old_outputs()
                     
                     # Brief pause before polling again
                     time.sleep(1)
@@ -210,6 +292,23 @@ def main():
         help=f'Sentinel file path for graceful shutdown (default: {DEFAULT_SENTINEL_FILE})'
     )
     parser.add_argument(
+        '--cleanup-enabled',
+        type=lambda x: x.lower() == 'true',
+        default=DEFAULT_CLEANUP_ENABLED,
+        help=f'Enable automatic cleanup of old output files (default: {DEFAULT_CLEANUP_ENABLED})'
+    )
+    parser.add_argument(
+        '--cleanup-age-hours',
+        type=float,
+        default=DEFAULT_CLEANUP_AGE_HOURS,
+        help=f'Delete output files older than this many hours (default: {DEFAULT_CLEANUP_AGE_HOURS})'
+    )
+    parser.add_argument(
+        '--output-path',
+        default=DEFAULT_OUTPUT_PATH,
+        help=f'ComfyUI output directory path (default: {DEFAULT_OUTPUT_PATH})'
+    )
+    parser.add_argument(
         '--debug',
         action='store_true',
         help='Enable debug logging'
@@ -226,7 +325,10 @@ def main():
         api_url=args.api_url,
         poll_interval=args.poll_interval,
         worker_secret=args.worker_secret,
-        sentinel_file=args.sentinel_file
+        sentinel_file=args.sentinel_file,
+        cleanup_enabled=args.cleanup_enabled,
+        cleanup_age_hours=args.cleanup_age_hours,
+        output_path=args.output_path
     )
     
     try:

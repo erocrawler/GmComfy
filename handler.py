@@ -792,13 +792,57 @@ def handler(job):
         current_node_progress = 0.0
         executing_nodes = set()
         execution_done = False
+        node_progress_count = {}  # Track how many progress events each node has sent
         
         # Progress webhook throttling
         last_progress_webhook = time.time()
         progress_webhook_interval = 2.0  # seconds
+        last_progress_check = time.time()
+        progress_check_interval = 1.0  # Check and report progress every second for nodes without progress events
+        
+        def calculate_and_report_progress(force=False):
+            """Calculate overall progress and send webhook if interval elapsed."""
+            nonlocal last_progress_webhook
+            
+            # Calculate overall workflow progress using weighted approach
+            if total_weight > 0:
+                current_progress_weight = completed_weight + (current_node_weight * current_node_progress)
+                overall_progress = (current_progress_weight / total_weight) * 100
+            else:
+                overall_progress = 0
+            
+            # Also calculate simple node-count-based progress as a fallback indicator
+            node_count_progress = (len(executing_nodes) / len(workflow)) * 100 if len(workflow) > 0 else 0
+            
+            print(f"worker-comfyui - Overall progress: {overall_progress:.1f}% (weighted), {node_count_progress:.1f}% (by node count) - node {current_node_id}: {current_node_progress * 100:.1f}%, completed_weight: {completed_weight:.1f}, current_weight: {current_node_weight:.1f}")
+            
+            # Send webhook if interval elapsed or forced
+            current_time = time.time()
+            if force or (current_time - last_progress_webhook >= progress_webhook_interval):
+                try:
+                    progress_result = {
+                        "status": "processing",
+                        "progress": {
+                            "percentage": round(overall_progress, 1),
+                            "completed_nodes": len(executing_nodes) - 1,  # Subtract 1 because current node is in executing_nodes but not completed
+                            "total_nodes": len(workflow),
+                            "current_node": current_node_id,
+                            "current_node_progress": round(current_node_progress * 100, 1)
+                        }
+                    }
+                    _send_webhook_notification(job_id, progress_result)
+                    last_progress_webhook = current_time
+                except Exception as e:
+                    print(f"worker-comfyui - Error sending progress webhook: {e}")
         
         while True:
             try:
+                # Check if we should report progress based on time (for nodes that don't emit progress events)
+                current_time = time.time()
+                if current_node_id and (current_time - last_progress_check >= progress_check_interval):
+                    calculate_and_report_progress()
+                    last_progress_check = current_time
+                
                 out = ws.recv()
                 if isinstance(out, str):
                     message = json.loads(out)
@@ -832,6 +876,9 @@ def handler(job):
                                 
                                 node_desc = " (HEAVY)" if current_node_weight > 10 else ""
                                 print(f"worker-comfyui - Executing node {node_id}{node_desc} ({len(executing_nodes)}/{len(workflow)})")
+                                
+                                # Report progress when a new node starts (previous node completed)
+                                calculate_and_report_progress()
                     elif message.get("type") == "progress":
                         data = message.get("data", {})
                         value = data.get("value", 0)
@@ -839,9 +886,6 @@ def handler(job):
                         node = data.get("node")
                         
                         if max_val > 0:
-                            # Current node progress (0.0 to 1.0)
-                            current_node_progress = value / max_val
-                            
                             # Make sure we have the weight for the current node from the progress message
                             # This handles cases where progress arrives before the executing message
                             if node and (current_node_id != node):
@@ -849,33 +893,23 @@ def handler(job):
                                 current_node_id = node
                                 current_node_weight = node_weights.get(node, default_weight)
                             
-                            # Calculate overall workflow progress using weighted approach
-                            if total_weight > 0:
-                                current_progress_weight = completed_weight + (current_node_weight * current_node_progress)
-                                overall_progress = (current_progress_weight / total_weight) * 100
+                            # Track progress event count for this node
+                            if node:
+                                node_progress_count[node] = node_progress_count.get(node, 0) + 1
+                            
+                            # Calculate progress (0.0 to 1.0)
+                            reported_progress = value / max_val
+                            
+                            # Some nodes weirdly report 100% on first message, then proper values
+                            # Ignore the first progress event if it reports >= 99% completion
+                            if node and node_progress_count.get(node, 0) == 1 and reported_progress >= 0.99:
+                                print(f"worker-comfyui - Node {node} reported {reported_progress * 100:.1f}% on first progress event, ignoring (likely spurious)")
                             else:
-                                overall_progress = 0
-                            
-                            print(f"worker-comfyui - Overall progress: {overall_progress:.1f}% (node {node}: {current_node_progress * 100:.1f}%, completed_weight: {completed_weight:.1f}, current_weight: {current_node_weight:.1f})")
-                            
-                            # Throttle webhook notifications
-                            current_time = time.time()
-                            if current_time - last_progress_webhook >= progress_webhook_interval:
-                                try:
-                                    progress_result = {
-                                        "status": "processing",
-                                        "progress": {
-                                            "percentage": round(overall_progress, 1),
-                                            "completed_nodes": len(executing_nodes),
-                                            "total_nodes": len(workflow),
-                                            "current_node": node,
-                                            "current_node_progress": round(current_node_progress * 100, 1)
-                                        }
-                                    }
-                                    _send_webhook_notification(job_id, progress_result)
-                                    last_progress_webhook = current_time
-                                except Exception as e:
-                                    print(f"worker-comfyui - Error sending progress webhook: {e}")
+                                # Update current node progress
+                                current_node_progress = reported_progress
+                                
+                                # Report progress using the helper function
+                                calculate_and_report_progress()
                     elif message.get("type") == "execution_error":
                         data = message.get("data", {})
                         if data.get("prompt_id") == prompt_id:
