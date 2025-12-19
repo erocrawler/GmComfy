@@ -255,7 +255,6 @@ def upload_input_files(images):
 
             if is_url:
                 # Handle URL-based image
-                print(f"worker-comfyui - Downloading image from URL: {image_data}")
                 response = requests.get(image_data, timeout=30)
                 response.raise_for_status()
                 blob = response.content
@@ -285,7 +284,6 @@ def upload_input_files(images):
             response.raise_for_status()
 
             responses.append(f"Successfully uploaded {name}")
-            print(f"worker-comfyui - Successfully uploaded {name}")
 
         except base64.binascii.Error as e:
             error_msg = f"Error decoding base64 for {image.get('name', 'unknown')}: {e}"
@@ -437,7 +435,6 @@ def get_file_data(filename, subfolder, file_type):
         # Use requests for consistency and timeout
         response = requests.get(f"http://{COMFY_HOST}/view?{url_values}", timeout=60)
         response.raise_for_status()
-        print(f"worker-comfyui - Successfully fetched file data for {filename}")
         return response.content
     except requests.Timeout:
         print(f"worker-comfyui - Timeout fetching file data for {filename}")
@@ -497,7 +494,6 @@ def process_output_files(outputs, job_id):
                         try:
                             with open(local_path, "rb") as f:
                                 file_bytes = f.read()
-                            print(f"worker-comfyui - Read local file {local_path} for {filename}")
                         except Exception as e:
                             err = f"Error reading local file {local_path}: {e}"
                             print(f"worker-comfyui - {err}")
@@ -517,7 +513,6 @@ def process_output_files(outputs, job_id):
                         with tempfile.NamedTemporaryFile(suffix=file_extension, delete=False) as temp_file:
                             temp_file.write(file_bytes)
                             temp_file_path = temp_file.name
-                        print(f"worker-comfyui - Wrote file bytes to temporary file: {temp_file_path}")
 
                         s3_url = upload_output_files(job_id, temp_file_path)
                         try:
@@ -526,7 +521,6 @@ def process_output_files(outputs, job_id):
                             pass
 
                         output_files.append({"filename": filename, "type": "s3_url", "data": s3_url})
-                        print(f"worker-comfyui - Uploaded {filename} to S3: {s3_url}")
                     except Exception as e:
                         err = f"Error uploading {filename} to S3: {e}"
                         print(f"worker-comfyui - {err}")
@@ -540,7 +534,6 @@ def process_output_files(outputs, job_id):
                     try:
                         base64_file = base64.b64encode(file_bytes).decode("utf-8")
                         output_files.append({"filename": filename, "type": "base64", "data": base64_file})
-                        print(f"worker-comfyui - Encoded {filename} as base64")
                     except Exception as e:
                         err = f"Error encoding {filename} to base64: {e}"
                         print(f"worker-comfyui - {err}")
@@ -814,8 +807,6 @@ def handler(job):
             # Also calculate simple node-count-based progress as a fallback indicator
             node_count_progress = (len(executing_nodes) / len(workflow)) * 100 if len(workflow) > 0 else 0
             
-            print(f"worker-comfyui - Overall progress: {overall_progress:.1f}% (weighted), {node_count_progress:.1f}% (by node count) - node {current_node_id}: {current_node_progress * 100:.1f}%, completed_weight: {completed_weight:.1f}, current_weight: {current_node_weight:.1f}")
-            
             # Send webhook if interval elapsed or forced
             current_time = time.time()
             if force or (current_time - last_progress_webhook >= progress_webhook_interval):
@@ -848,9 +839,6 @@ def handler(job):
                     message = json.loads(out)
                     if message.get("type") == "status":
                         status_data = message.get("data", {}).get("status", {})
-                        print(
-                            f"worker-comfyui - Status update: {status_data.get('exec_info', {}).get('queue_remaining', 'N/A')} items remaining in queue"
-                        )
                     elif message.get("type") == "executing":
                         # Track node execution for overall progress
                         data = message.get("data", {})
@@ -875,7 +863,6 @@ def handler(job):
                                 current_node_progress = 0.0
                                 
                                 node_desc = " (HEAVY)" if current_node_weight > 10 else ""
-                                print(f"worker-comfyui - Executing node {node_id}{node_desc} ({len(executing_nodes)}/{len(workflow)})")
                                 
                                 # Report progress when a new node starts (previous node completed)
                                 calculate_and_report_progress()
@@ -889,7 +876,6 @@ def handler(job):
                             # Make sure we have the weight for the current node from the progress message
                             # This handles cases where progress arrives before the executing message
                             if node and (current_node_id != node):
-                                print(f"worker-comfyui - Progress for node {node} but current_node_id is {current_node_id}, updating")
                                 current_node_id = node
                                 current_node_weight = node_weights.get(node, default_weight)
                             

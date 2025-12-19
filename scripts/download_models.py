@@ -65,6 +65,17 @@ MODELS = {
             "url": "https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_low_noise_14B_Q8_0.gguf",
             "path": "models/unet",
             "size_gb": 14.5,
+        },
+        # CivitAI GGUF models
+        "DasiwaWAN22I2V14BTastysinV8_q8High.gguf": {
+            "url": "https://civitai.com/api/download/models/2466604",
+            "path": "models/unet",
+            "size_gb": 14.5,
+        },
+        "DasiwaWAN22I2V14BTastysinV8_q8Low.gguf": {
+            "url": "https://civitai.com/api/download/models/2466822",
+            "path": "models/unet",
+            "size_gb": 14.5,
         }
     },
     
@@ -105,13 +116,13 @@ MODELS = {
             "path": "models/loras",
             "size_gb": 0.1,
         },
-        "CRM-FULL-EPOCH-80-HIGH.safetensors": {
-            "url": "https://huggingface.co/Wydet/CRM-FULL-EPOCH-80/resolve/main/CRM-FULL-EPOCH-80-HIGH.safetensors",
+        "cumshot_wan22_high.safetensors": {
+            "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_high.safetensors",
             "path": "models/loras",
             "size_gb": 0.3,
         },
-        "CRM-FULL-EPOCH-80-LOW.safetensors": {
-            "url": "https://huggingface.co/Wydet/CRM-FULL-EPOCH-80/resolve/main/CRM-FULL-EPOCH-80-LOW.safetensors",
+        "cumshot_wan22_low.safetensors": {
+            "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_low.safetensors",
             "path": "models/loras",
             "size_gb": 0.3,
         }
@@ -119,7 +130,7 @@ MODELS = {
 }
 
 
-def download_file(url: str, dest_path: Path, desc: str = None) -> bool:
+def download_file(url: str, dest_path: Path, desc: str = None, civitai_token: str = None) -> bool:
     """
     Download a file with progress bar.
     
@@ -127,6 +138,7 @@ def download_file(url: str, dest_path: Path, desc: str = None) -> bool:
         url: URL to download from
         dest_path: Destination file path
         desc: Description for progress bar
+        civitai_token: CivitAI API token for authenticated downloads
         
     Returns:
         True if successful, False otherwise
@@ -140,8 +152,14 @@ def download_file(url: str, dest_path: Path, desc: str = None) -> bool:
         # Create parent directory if it doesn't exist
         dest_path.parent.mkdir(parents=True, exist_ok=True)
         
+        # Add CivitAI token if provided and URL is from CivitAI
+        download_url = url
+        if civitai_token and 'civitai.com' in url:
+            separator = '&' if '?' in url else '?'
+            download_url = f"{url}{separator}token={civitai_token}"
+        
         # Start download with streaming
-        response = requests.get(url, stream=True, timeout=30)
+        response = requests.get(download_url, stream=True, timeout=30)
         response.raise_for_status()
         
         total_size = int(response.headers.get('content-length', 0))
@@ -200,7 +218,8 @@ def calculate_total_size(categories: List[str] = None) -> float:
 def download_models(
     base_path: Path,
     categories: List[str] = None,
-    dry_run: bool = False
+    dry_run: bool = False,
+    civitai_token: str = None
 ) -> Dict[str, int]:
     """
     Download all configured models.
@@ -209,6 +228,7 @@ def download_models(
         base_path: Base path for ComfyUI installation
         categories: List of categories to download (None = all)
         dry_run: If True, only show what would be downloaded
+        civitai_token: CivitAI API token for authenticated downloads
         
     Returns:
         Dictionary with success/failure counts
@@ -257,7 +277,7 @@ def download_models(
             print(f"   URL: {file_info['url']}")
             print(f"   Destination: {dest_path}\n")
             
-            if download_file(file_info["url"], dest_path, file_name):
+            if download_file(file_info["url"], dest_path, file_name, civitai_token):
                 stats["success"] += 1
             else:
                 stats["failed"] += 1
@@ -291,6 +311,11 @@ def main():
         "--list",
         action="store_true",
         help="List all models and exit"
+    )
+    parser.add_argument(
+        "--civitai-token",
+        type=str,
+        help="CivitAI API token for downloading models from CivitAI (required for CivitAI models)"
     )
     
     args = parser.parse_args()
@@ -327,7 +352,8 @@ def main():
         stats = download_models(
             args.base_path,
             categories=args.categories,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            civitai_token=args.civitai_token
         )
         
         # Print summary
