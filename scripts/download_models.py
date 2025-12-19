@@ -125,6 +125,26 @@ MODELS = {
             "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_low.safetensors",
             "path": "models/loras",
             "size_gb": 0.3,
+        },
+        "creampie_wan22_e50_high.safetensors": {
+            "url": "https://wan.sg-sin-1.linodeobjects.com/creampie_wan22_e50_high.safetensors",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "creampie_wan22_e50_low.safetensors": {
+            "url": "https://wan.sg-sin-1.linodeobjects.com/creampie_wan22_e50_low.safetensors",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "Penis_HN_v1.0.safetensors": {
+            "url": "https://civitai.com/api/download/models/2308249",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "Penis_LN_v1.0.safetensors": {
+            "url": "https://civitai.com/api/download/models/2308253",
+            "path": "models/loras",
+            "size_gb": 0.3,
         }
     }
 }
