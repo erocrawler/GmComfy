@@ -663,16 +663,14 @@ def handler(job):
         is_progress = result.get("status") == "processing"
         if is_progress:
             try:
-                print(f"worker-comfyui - Sending progress webhook to {url}.")
                 resp = requests.post(url, json=payload, headers=headers, timeout=10)
                 if 200 <= resp.status_code < 300:
-                    print(f"worker-comfyui - Progress webhook delivered (status {resp.status_code}).")
                     return True
                 else:
-                    print(f"worker-comfyui - Progress webhook responded with status {resp.status_code}.")
+                    print(f"worker-comfyui - Progress webhook {url} responded with status {resp.status_code}.")
                     return False
             except Exception as e:
-                print(f"worker-comfyui - Error sending progress webhook: {e}")
+                print(f"worker-comfyui - Error sending progress webhook {url}: {e}")
                 return False
 
         # Final status/error notifications use retry logic
