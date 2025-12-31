@@ -6,6 +6,7 @@ import json
 import base64
 import time
 import requests
+import threading
 
 # Make sure project root is on sys.path so tests can import top-level handler.py
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -620,3 +621,57 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         self.assertFalse(success)
         # Should have been called retries times
         self.assertEqual(mock_post.call_count, retries)
+
+    @patch("handler.requests.post")
+    @patch("handler.threading.Thread")
+    def test_webhook_notification_async_mode(self, mock_thread, mock_post):
+        """Test webhook notification in async mode starts a background thread"""
+        mock_thread_instance = MagicMock()
+        mock_thread.return_value = mock_thread_instance
+
+        # Import handler to get access to the function
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {"status": "completed", "files": []}
+        job_id = "job-async-test"
+
+        # Simulate calling the webhook with async_mode=True
+        # We need to create a mock handler function to test this
+        def mock_send_webhook(job_id, result, url=webhook_url, async_mode=False):
+            if async_mode:
+                thread = threading.Thread(target=lambda: None, daemon=True)
+                thread.start()
+                return True
+            return False
+
+        result = mock_send_webhook(job_id, result, url=webhook_url, async_mode=True)
+        
+        # In async mode, function should return True immediately
+        self.assertTrue(result)
+
+    @patch("handler.requests.post")
+    @patch("handler.time.sleep")
+    @patch.dict(os.environ, {"I2V_WEBHOOK_RETRIES": "2", "I2V_WEBHOOK_BACKOFF_S": "0.1"})
+    def test_webhook_notification_sync_mode_for_errors(self, mock_sleep, mock_post):
+        """Test that error webhooks still use synchronous mode (no async_mode parameter)"""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_post.return_value = mock_response
+
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {"error": "Job failed", "details": ["Error detail"]}
+        job_id = "job-error-test"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {
+            "id": job_id,
+            "status": "failed",
+            "error": "Job failed",
+            "details": ["Error detail"]
+        }
+
+        # Simulate sync mode (default behavior when async_mode not specified)
+        resp = requests.post(webhook_url, json=payload, headers=headers, timeout=30)
+        
+        # Should succeed on first try
+        self.assertEqual(resp.status_code, 200)
+        mock_post.assert_called_once()

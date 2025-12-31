@@ -40,7 +40,9 @@ These settings control the behavior of webhook notifications sent when using the
 > [!NOTE]
 > **Webhook Retry Behavior:**
 > - **Final notifications** (completion/failure) use exponential backoff with jitter and retry on connection errors, timeouts, and other network issues.
+> - **Final notifications run in a background thread**, allowing the handler to return immediately and process the next job on the GPU without waiting for webhook retries to complete.
 > - **Progress notifications** are sent once without retries (fire-and-forget) to avoid delays in job processing.
+> - **Error notifications** during job processing use synchronous retries to ensure delivery before returning error status.
 > - The retry mechanism handles common network errors including `ConnectionError`, `Timeout`, and general `RequestException` cases.
 > - Example backoff sequence with defaults (2s base): 2s → 4s → 8s → 16s → 32s (capped at 60s if `I2V_WEBHOOK_MAX_BACKOFF_S` is set)
 
