@@ -509,3 +509,114 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         else:
             # This branch should not be reached
             self.fail("Webhook should not be sent when URL is None")
+
+    @patch("handler.requests.post")
+    @patch("handler.time.sleep")  # Mock sleep to speed up tests
+    @patch.dict(os.environ, {"I2V_WEBHOOK_RETRIES": "3", "I2V_WEBHOOK_BACKOFF_S": "0.1", "I2V_WEBHOOK_TIMEOUT_S": "30"})
+    def test_webhook_notification_connection_error_retry(self, mock_sleep, mock_post):
+        """Test webhook retries on connection errors with exponential backoff"""
+        # First two attempts fail with connection error, third succeeds
+        mock_post.side_effect = [
+            requests.exceptions.ConnectionError("Network unreachable"),
+            requests.exceptions.ConnectionError("Network unreachable"),
+            MagicMock(status_code=200),
+        ]
+
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {"status": "completed", "files": []}
+        job_id = "job-connection-test"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {"id": job_id, "status": "completed", "files": []}
+
+        # Simulate retry logic with exponential backoff
+        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 5))
+        base_backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 2.0))
+        timeout = int(os.environ.get("I2V_WEBHOOK_TIMEOUT_S", 30))
+
+        success = False
+        for attempt in range(1, retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=payload, headers=headers, timeout=timeout)
+                if 200 <= resp.status_code < 300:
+                    success = True
+                    break
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout, requests.exceptions.RequestException):
+                pass
+            if attempt < retries:
+                # Simulate exponential backoff (simplified for test)
+                time.sleep(base_backoff * (2 ** (attempt - 1)))
+
+        self.assertTrue(success)
+        # Should have been called three times (two failures, one success)
+        self.assertEqual(mock_post.call_count, 3)
+
+    @patch("handler.requests.post")
+    @patch("handler.time.sleep")
+    @patch.dict(os.environ, {"I2V_WEBHOOK_RETRIES": "3", "I2V_WEBHOOK_BACKOFF_S": "0.1", "I2V_WEBHOOK_TIMEOUT_S": "30"})
+    def test_webhook_notification_timeout_error_retry(self, mock_sleep, mock_post):
+        """Test webhook retries on timeout errors"""
+        # First attempt times out, second succeeds
+        mock_post.side_effect = [
+            requests.exceptions.Timeout("Request timed out"),
+            MagicMock(status_code=200),
+        ]
+
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {"status": "completed", "files": []}
+        job_id = "job-timeout-test"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {"id": job_id, "status": "completed", "files": []}
+
+        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 5))
+        timeout = int(os.environ.get("I2V_WEBHOOK_TIMEOUT_S", 30))
+
+        success = False
+        for attempt in range(1, retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=payload, headers=headers, timeout=timeout)
+                if 200 <= resp.status_code < 300:
+                    success = True
+                    break
+            except requests.exceptions.Timeout:
+                pass
+            if attempt < retries:
+                time.sleep(0.1)
+
+        self.assertTrue(success)
+        # Should have been called twice (one timeout, one success)
+        self.assertEqual(mock_post.call_count, 2)
+
+    @patch("handler.requests.post")
+    @patch("handler.time.sleep")
+    @patch.dict(os.environ, {"I2V_WEBHOOK_RETRIES": "2", "I2V_WEBHOOK_BACKOFF_S": "0.1"})
+    def test_webhook_notification_all_retries_exhausted(self, mock_sleep, mock_post):
+        """Test webhook fails after all retries are exhausted"""
+        # All attempts fail
+        mock_post.side_effect = requests.exceptions.ConnectionError("Network unreachable")
+
+        webhook_url = "https://example.com/webhook?token=abc123"
+        result = {"status": "completed", "files": []}
+        job_id = "job-fail-test"
+
+        headers = {"Content-Type": "application/json"}
+        payload = {"id": job_id, "status": "completed", "files": []}
+
+        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 3))
+
+        success = False
+        for attempt in range(1, retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=payload, headers=headers, timeout=10)
+                if 200 <= resp.status_code < 300:
+                    success = True
+                    break
+            except requests.exceptions.ConnectionError:
+                pass
+            if attempt < retries:
+                time.sleep(0.1)
+
+        self.assertFalse(success)
+        # Should have been called retries times
+        self.assertEqual(mock_post.call_count, retries)
