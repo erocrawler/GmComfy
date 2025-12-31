@@ -26,6 +26,24 @@ This document outlines the environment variables available for configuring the `
 
 > [!TIP] > **For troubleshooting:** Set `COMFY_LOG_LEVEL=DEBUG` to get detailed logs when ComfyUI crashes or behaves unexpectedly. This helps identify the exact point of failure in your workflows.
 
+## Webhook Configuration
+
+These settings control the behavior of webhook notifications sent when using the `callback_url` parameter in job requests. Webhooks are used to notify external systems when jobs complete, fail, or report progress.
+
+| Environment Variable           | Description                                                                                                                                                           | Default |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `I2V_WEBHOOK_RETRIES`          | Number of retry attempts for final webhook delivery (completion/failure notifications). Does not apply to progress updates which are fire-and-forget.                 | `5`     |
+| `I2V_WEBHOOK_BACKOFF_S`        | Base delay in seconds for exponential backoff between webhook retry attempts. Actual delay increases exponentially: base × 2^(attempt-1) + random jitter.            | `2.0`   |
+| `I2V_WEBHOOK_MAX_BACKOFF_S`    | Maximum delay in seconds between webhook retry attempts, caps the exponential backoff to prevent excessively long waits.                                              | `60.0`  |
+| `I2V_WEBHOOK_TIMEOUT_S`        | Timeout in seconds for webhook HTTP requests. Increase this if your webhook endpoint needs more time to respond.                                                     | `30`    |
+
+> [!NOTE]
+> **Webhook Retry Behavior:**
+> - **Final notifications** (completion/failure) use exponential backoff with jitter and retry on connection errors, timeouts, and other network issues.
+> - **Progress notifications** are sent once without retries (fire-and-forget) to avoid delays in job processing.
+> - The retry mechanism handles common network errors including `ConnectionError`, `Timeout`, and general `RequestException` cases.
+> - Example backoff sequence with defaults (2s base): 2s → 4s → 8s → 16s → 32s (capped at 60s if `I2V_WEBHOOK_MAX_BACKOFF_S` is set)
+
 ## AWS S3 Upload Configuration
 
 Configure these variables **only** if you want the worker to upload generated images directly to an AWS S3 bucket. If these are not set, images will be returned as base64-encoded strings in the API response.
