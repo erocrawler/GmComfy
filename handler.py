@@ -14,6 +14,7 @@ import traceback
 import boto3
 from botocore.config import Config as BConfig
 import random
+import threading
 
 # Time to wait between API check attempts in milliseconds
 COMFY_API_AVAILABLE_INTERVAL_MS = int(os.environ.get("COMFY_API_AVAILABLE_INTERVAL_MS", 500))
@@ -636,7 +637,17 @@ def handler(job):
     # Webhook helper using validated callback_url only
     webhook_url = validated_data.get("callback_url") if isinstance(validated_data, dict) else None
 
-    def _send_webhook_notification(job_id, result, url=webhook_url):
+    def _send_webhook_notification(job_id, result, url=webhook_url, async_mode=False):
+        """
+        Send webhook notification. If async_mode=True, runs retry logic in a background thread
+        to avoid blocking the handler from returning and processing the next job.
+        
+        Args:
+            job_id: The job identifier
+            result: Result dictionary containing status, errors, files, etc.
+            url: Webhook URL to send notification to
+            async_mode: If True, runs final notifications in background thread (default: False)
+        """
         if not url:
             return False
         
@@ -675,40 +686,55 @@ def handler(job):
                 return False
 
         # Final status/error notifications use enhanced retry logic with exponential backoff + jitter
-        print(f"worker-comfyui - Sending webhook notification to {url}.")
-        retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 5))
-        base_backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 2.0))
-        max_backoff = float(os.environ.get("I2V_WEBHOOK_MAX_BACKOFF_S", 60.0))
-        timeout = int(os.environ.get("I2V_WEBHOOK_TIMEOUT_S", 30))
+        def _retry_webhook():
+            print(f"worker-comfyui - Sending webhook notification to {url}.")
+            retries = int(os.environ.get("I2V_WEBHOOK_RETRIES", 5))
+            base_backoff = float(os.environ.get("I2V_WEBHOOK_BACKOFF_S", 2.0))
+            max_backoff = float(os.environ.get("I2V_WEBHOOK_MAX_BACKOFF_S", 60.0))
+            timeout = int(os.environ.get("I2V_WEBHOOK_TIMEOUT_S", 30))
 
-        for attempt in range(1, retries + 1):
-            try:
-                print(f"worker-comfyui - Sending webhook notification to {url} (attempt {attempt}/{retries})")
-                resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
-                if 200 <= resp.status_code < 300:
-                    print(f"worker-comfyui - Webhook delivered successfully (status {resp.status_code}).")
-                    return True
-                else:
-                    print(f"worker-comfyui - Webhook responded with status {resp.status_code}: {resp.text}")
-            except requests.exceptions.Timeout as e:
-                print(f"worker-comfyui - Webhook timeout (attempt {attempt}): {e}")
-            except requests.exceptions.ConnectionError as e:
-                print(f"worker-comfyui - Webhook connection error (attempt {attempt}): {e}")
-            except requests.exceptions.RequestException as e:
-                print(f"worker-comfyui - Webhook request error (attempt {attempt}): {e}")
-            except Exception as e:
-                print(f"worker-comfyui - Unexpected error sending webhook (attempt {attempt}): {e}")
+            for attempt in range(1, retries + 1):
+                try:
+                    print(f"worker-comfyui - Sending webhook notification to {url} (attempt {attempt}/{retries})")
+                    resp = requests.post(url, json=payload, headers=headers, timeout=timeout)
+                    if 200 <= resp.status_code < 300:
+                        print(f"worker-comfyui - Webhook delivered successfully (status {resp.status_code}).")
+                        return True
+                    else:
+                        print(f"worker-comfyui - Webhook responded with status {resp.status_code}: {resp.text}")
+                except requests.exceptions.Timeout as e:
+                    print(f"worker-comfyui - Webhook timeout (attempt {attempt}): {e}")
+                except requests.exceptions.ConnectionError as e:
+                    print(f"worker-comfyui - Webhook connection error (attempt {attempt}): {e}")
+                except requests.exceptions.RequestException as e:
+                    print(f"worker-comfyui - Webhook request error (attempt {attempt}): {e}")
+                except Exception as e:
+                    print(f"worker-comfyui - Unexpected error sending webhook (attempt {attempt}): {e}")
 
-            if attempt < retries:
-                # Exponential backoff with jitter: base_backoff * 2^(attempt-1) + random jitter
-                exponential_delay = min(base_backoff * (2 ** (attempt - 1)), max_backoff)
-                jitter = random.uniform(0, exponential_delay * 0.1)  # 10% jitter
-                total_delay = exponential_delay + jitter
-                print(f"worker-comfyui - Waiting {total_delay:.2f}s before retry...")
-                time.sleep(total_delay)
+                if attempt < retries:
+                    # Exponential backoff with jitter: base_backoff * 2^(attempt-1) + random jitter
+                    exponential_delay = min(base_backoff * (2 ** (attempt - 1)), max_backoff)
+                    jitter = random.uniform(0, exponential_delay * 0.1)  # 10% jitter
+                    total_delay = exponential_delay + jitter
+                    print(f"worker-comfyui - Waiting {total_delay:.2f}s before retry...")
+                    time.sleep(total_delay)
 
-        print("worker-comfyui - All webhook attempts failed.")
-        return False
+            print("worker-comfyui - All webhook attempts failed.")
+            return False
+        
+        # If async_mode is enabled, run webhook retries in background thread
+        if async_mode:
+            thread = threading.Thread(
+                target=_retry_webhook,
+                name=f"webhook-{job_id[:8]}",
+                daemon=True  # Daemon thread won't prevent process exit
+            )
+            thread.start()
+            print(f"worker-comfyui - Webhook notification started in background thread.")
+            return True  # Return immediately, don't wait for thread
+        else:
+            # Synchronous mode: run retry logic in main thread (for error webhooks)
+            return _retry_webhook()
 
     # Make sure that the ComfyUI HTTP API is available before proceeding
     if not check_server(
@@ -1063,8 +1089,9 @@ def handler(job):
     total_outputs = len(output_files)
     print(f"worker-comfyui - Job completed. Returning {total_outputs} output(s).")
     try:
-        # Best-effort: notify external system about completion
-        _send_webhook_notification(job_id, final_result)
+        # Best-effort: notify external system about completion in background thread
+        # This allows the handler to return immediately and process the next job
+        _send_webhook_notification(job_id, final_result, async_mode=True)
     except Exception as e:
         print(f"worker-comfyui - Unexpected error notifying webhook: {e}")
 
