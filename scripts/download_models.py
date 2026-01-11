@@ -96,13 +96,13 @@ MODELS = {
             "path": "models/loras",
             "size_gb": 0.3,
         },
-        "DR34ML4Y_I2V_14B_HIGH.safetensors": {
-            "url": "https://huggingface.co/wiikoo/WAN-LORA/resolve/main/wan2.2/DR34ML4Y_I2V_14B_HIGH.safetensors",
+        "DR34ML4Y_I2V_14B_HIGH_V2.safetensors": {
+            "url": "https://civitai.com/api/download/models/2553151",
             "path": "models/loras",
             "size_gb": 0.3,
         },
-        "DR34ML4Y_I2V_14B_LOW.safetensors": {
-            "url": "https://huggingface.co/wiikoo/WAN-LORA/resolve/main/wan2.2/DR34ML4Y_I2V_14B_LOW.safetensors",
+        "DR34ML4Y_I2V_14B_LOW_V2.safetensors": {
+            "url": "https://civitai.com/api/download/models/2553271",
             "path": "models/loras",
             "size_gb": 0.3,
         },
@@ -143,6 +143,26 @@ MODELS = {
         },
         "Penis_LN_v1.0.safetensors": {
             "url": "https://civitai.com/api/download/models/2308253",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "2D_animation_effects.safetensors": {
+            "url": "https://civitai.com/api/download/models/2174159",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "WAN-2.2-I2V_st0mach_bulge_HIGH.safetensors": {
+            "url": "https://civitai.com/api/download/models/2424257",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "WAN-2.2-I2V_st0mach_bulge_LOW.safetensors": {
+            "url": "https://civitai.com/api/download/models/2424273",
+            "path": "models/loras",
+            "size_gb": 0.3,
+        },
+        "wan22-video6-crashzoom-16-sel-6-000150.safetensors": {
+            "url": "https://civitai.com/api/download/models/2146673",
             "path": "models/loras",
             "size_gb": 0.3,
         }
