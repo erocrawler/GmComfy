@@ -79,6 +79,15 @@ MODELS = {
         }
     },
     
+    # Upscale Models
+    "upscale_models": {
+        "RealESRGAN_x2plus.pth": {
+            "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
+            "path": "models/upscale_models",
+            "size_gb": 0.064,
+        }
+    },
+    
     # LoRAs
     "loras": {
         "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors": {
@@ -339,7 +348,7 @@ def main():
         "--categories",
         type=str,
         nargs="+",
-        choices=["clip", "vae", "diffusion_models", "unet", "loras"],
+        choices=["clip", "vae", "diffusion_models", "unet", "upscale_models", "loras"],
         help="Specific categories to download (default: all)"
     )
     parser.add_argument(
