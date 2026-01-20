@@ -4,6 +4,10 @@ ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 # Stage 1: Base image with common dependencies
 FROM ${BASE_IMAGE} AS base
 
+# cache busting to force runpod retrys
+ARG CACHE_BUST=20260119
+RUN echo "Resetting cache: $CACHE_BUST"
+
 # Build arguments for this stage with sensible defaults for standalone builds
 ARG COMFYUI_VERSION=latest
 ARG PYTORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
