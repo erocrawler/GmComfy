@@ -13,167 +13,208 @@ from tqdm import tqdm
 import argparse
 
 
-# Model configurations
+# Model configurations organized by model set
 MODELS = {
-    # Text Encoder / CLIP
-    "clip": {
-        "umt5_xxl_fp8_e4m3fn_scaled.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
-            "path": "models/clip",
-            "size_gb": 6.7,
+    "wan": {
+        # Text Encoder / CLIP
+        "clip": {
+            "umt5_xxl_fp8_e4m3fn_scaled.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                "path": "models/clip",
+                "size_gb": 6.7,
+            },
+            "": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors",
+                "path": "models/clip",
+                "size_gb": 11.4,
+            }
         },
-        "": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/text_encoders/umt5_xxl_fp16.safetensors",
-            "path": "models/clip",
-            "size_gb": 11.4,
-        }
-    },
 
-    
-    
-    # VAE
-    "vae": {
-        "wan_2.1_vae.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
-            "path": "models/vae",
-            "size_gb": 0.3,
+        
+        
+        # VAE
+        "vae": {
+            "wan_2.1_vae.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/vae/wan_2.1_vae.safetensors",
+                "path": "models/vae",
+                "size_gb": 0.3,
+            }
+        },
+        
+        # Diffusion Models
+        "diffusion_models": {
+            "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+                "path": "models/diffusion_models",
+                "size_gb": 7.3,
+            },
+            "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+                "path": "models/diffusion_models",
+                "size_gb": 7.3,
+            }
+        },
+        
+        # UNet models (GGUF quantized)
+        "unet": {
+            "wan2.2_i2v_high_noise_14B_Q8_0.gguf": {
+                "url": "https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_high_noise_14B_Q8_0.gguf",
+                "path": "models/unet",
+                "size_gb": 14.5,
+            },
+            "wan2.2_i2v_low_noise_14B_Q8_0.gguf": {
+                "url": "https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_low_noise_14B_Q8_0.gguf",
+                "path": "models/unet",
+                "size_gb": 14.5,
+            },
+            # CivitAI GGUF models
+            "DasiwaWAN22I2V14BTastysinV8_q8High.gguf": {
+                "url": "https://civitai.com/api/download/models/2466604",
+                "path": "models/unet",
+                "size_gb": 14.5,
+            },
+            "DasiwaWAN22I2V14BTastysinV8_q8Low.gguf": {
+                "url": "https://civitai.com/api/download/models/2466822",
+                "path": "models/unet",
+                "size_gb": 14.5,
+            }
+        },
+        
+        # Upscale Models
+        "upscale_models": {
+            "RealESRGAN_x2plus.pth": {
+                "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
+                "path": "models/upscale_models",
+                "size_gb": 0.064,
+            }
+        },
+        
+        # LoRAs
+        "loras": {
+            "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.5,
+            },
+            "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.5,
+            },
+            "wan22-video10-arcshot-16-sel-7-high.safetensors": {
+                "url": "https://huggingface.co/UnifiedHorusRA/ArcShot-Wan2.2_2.1-I2V-A14B/resolve/main/wan22-video10-arcshot-16-sel-7-high.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "DR34ML4Y_I2V_14B_HIGH_V2.safetensors": {
+                "url": "https://civitai.com/api/download/models/2553151",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "DR34ML4Y_I2V_14B_LOW_V2.safetensors": {
+                "url": "https://civitai.com/api/download/models/2553271",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "NSFW-22-H-e8.safetensors": {
+                "url": "https://huggingface.co/wiikoo/WAN-LORA/resolve/main/wan2.2/NSFW-22-H-e8.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.1,
+            },
+            "NSFW-22-L-e8.safetensors": {
+                "url": "https://huggingface.co/wiikoo/WAN-LORA/resolve/main/wan2.2/NSFW-22-L-e8.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.1,
+            },
+            "cumshot_wan22_high.safetensors": {
+                "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_high.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "cumshot_wan22_low.safetensors": {
+                "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_low.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "creampie_wan22_e50_high.safetensors": {
+                "url": "https://wan.sg-sin-1.linodeobjects.com/creampie_wan22_e50_high.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "creampie_wan22_e50_low.safetensors": {
+                "url": "https://wan.sg-sin-1.linodeobjects.com/creampie_wan22_e50_low.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "Penis_HN_v1.0.safetensors": {
+                "url": "https://civitai.com/api/download/models/2308249",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "Penis_LN_v1.0.safetensors": {
+                "url": "https://civitai.com/api/download/models/2308253",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "2D_animation_effects.safetensors": {
+                "url": "https://civitai.com/api/download/models/2174159",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "WAN-2.2-I2V_st0mach_bulge_HIGH.safetensors": {
+                "url": "https://civitai.com/api/download/models/2424257",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "WAN-2.2-I2V_st0mach_bulge_LOW.safetensors": {
+                "url": "https://civitai.com/api/download/models/2424273",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            },
+            "wan22-video6-crashzoom-16-sel-6-000150.safetensors": {
+                "url": "https://civitai.com/api/download/models/2146673",
+                "path": "models/loras",
+                "size_gb": 0.3,
+            }
         }
     },
     
-    # Diffusion Models
-    "diffusion_models": {
-        "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
-            "path": "models/diffusion_models",
-            "size_gb": 7.3,
+    "qwen": {
+        # Diffusion Models
+        "diffusion_models": {
+            "Qwen-Rapid-AIO-SFW-v22.safetensors": {
+                "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v22/Qwen-Rapid-AIO-SFW-v22.safetensors",
+                "path": "models/diffusion_models",
+                "size_gb": 3.5,
+            },
+            "Qwen-Rapid-AIO-NSFW-v22.safetensors": {
+                "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v22/Qwen-Rapid-AIO-NSFW-v22.safetensors",
+                "path": "models/diffusion_models",
+                "size_gb": 3.5,
+            }
         },
-        "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
-            "path": "models/diffusion_models",
-            "size_gb": 7.3,
-        }
-    },
-    
-    # UNet models (GGUF quantized)
-    "unet": {
-        "wan2.2_i2v_high_noise_14B_Q8_0.gguf": {
-            "url": "https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_high_noise_14B_Q8_0.gguf",
-            "path": "models/unet",
-            "size_gb": 14.5,
+        
+        # Text Encoder / CLIP (GGUF)
+        "clip": {
+            "Qwen2.5-VL-7B-Instruct-abliterated.Q8_0.gguf": {
+                "url": "https://huggingface.co/Phil2Sat/Qwen-Image-Edit-Rapid-AIO-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-abliterated/Qwen2.5-VL-7B-Instruct-abliterated.Q8_0.gguf",
+                "path": "models/clip",
+                "size_gb": 7.8,
+            },
+            "Qwen2.5-VL-7B-Instruct-abliterated.mmproj-Q8_0.gguf": {
+                "url": "https://huggingface.co/Phil2Sat/Qwen-Image-Edit-Rapid-AIO-GGUF/resolve/main/Qwen2.5-VL-7B-Instruct-abliterated/Qwen2.5-VL-7B-Instruct-abliterated.mmproj-Q8_0.gguf",
+                "path": "models/clip",
+                "size_gb": 0.6,
+            }
         },
-        "wan2.2_i2v_low_noise_14B_Q8_0.gguf": {
-            "url": "https://huggingface.co/bullerwins/Wan2.2-I2V-A14B-GGUF/resolve/main/wan2.2_i2v_low_noise_14B_Q8_0.gguf",
-            "path": "models/unet",
-            "size_gb": 14.5,
-        },
-        # CivitAI GGUF models
-        "DasiwaWAN22I2V14BTastysinV8_q8High.gguf": {
-            "url": "https://civitai.com/api/download/models/2466604",
-            "path": "models/unet",
-            "size_gb": 14.5,
-        },
-        "DasiwaWAN22I2V14BTastysinV8_q8Low.gguf": {
-            "url": "https://civitai.com/api/download/models/2466822",
-            "path": "models/unet",
-            "size_gb": 14.5,
-        }
-    },
-    
-    # Upscale Models
-    "upscale_models": {
-        "RealESRGAN_x2plus.pth": {
-            "url": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth",
-            "path": "models/upscale_models",
-            "size_gb": 0.064,
-        }
-    },
-    
-    # LoRAs
-    "loras": {
-        "wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.5,
-        },
-        "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors": {
-            "url": "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/main/split_files/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.5,
-        },
-        "wan22-video10-arcshot-16-sel-7-high.safetensors": {
-            "url": "https://huggingface.co/UnifiedHorusRA/ArcShot-Wan2.2_2.1-I2V-A14B/resolve/main/wan22-video10-arcshot-16-sel-7-high.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "DR34ML4Y_I2V_14B_HIGH_V2.safetensors": {
-            "url": "https://civitai.com/api/download/models/2553151",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "DR34ML4Y_I2V_14B_LOW_V2.safetensors": {
-            "url": "https://civitai.com/api/download/models/2553271",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "NSFW-22-H-e8.safetensors": {
-            "url": "https://huggingface.co/wiikoo/WAN-LORA/resolve/main/wan2.2/NSFW-22-H-e8.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.1,
-        },
-        "NSFW-22-L-e8.safetensors": {
-            "url": "https://huggingface.co/wiikoo/WAN-LORA/resolve/main/wan2.2/NSFW-22-L-e8.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.1,
-        },
-        "cumshot_wan22_high.safetensors": {
-            "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_high.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "cumshot_wan22_low.safetensors": {
-            "url": "https://huggingface.co/seraphimzz/wan22/resolve/main/cumshot_wan22_low.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "creampie_wan22_e50_high.safetensors": {
-            "url": "https://wan.sg-sin-1.linodeobjects.com/creampie_wan22_e50_high.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "creampie_wan22_e50_low.safetensors": {
-            "url": "https://wan.sg-sin-1.linodeobjects.com/creampie_wan22_e50_low.safetensors",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "Penis_HN_v1.0.safetensors": {
-            "url": "https://civitai.com/api/download/models/2308249",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "Penis_LN_v1.0.safetensors": {
-            "url": "https://civitai.com/api/download/models/2308253",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "2D_animation_effects.safetensors": {
-            "url": "https://civitai.com/api/download/models/2174159",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "WAN-2.2-I2V_st0mach_bulge_HIGH.safetensors": {
-            "url": "https://civitai.com/api/download/models/2424257",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "WAN-2.2-I2V_st0mach_bulge_LOW.safetensors": {
-            "url": "https://civitai.com/api/download/models/2424273",
-            "path": "models/loras",
-            "size_gb": 0.3,
-        },
-        "wan22-video6-crashzoom-16-sel-6-000150.safetensors": {
-            "url": "https://civitai.com/api/download/models/2146673",
-            "path": "models/loras",
-            "size_gb": 0.3,
+        
+        # VAE
+        "vae": {
+            "qwen_image_vae.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/main/split_files/vae/qwen_image_vae.safetensors",
+                "path": "models/vae",
+                "size_gb": 0.3,
+            }
         }
     }
 }
@@ -250,11 +291,14 @@ def download_file(url: str, dest_path: Path, desc: str = None, civitai_token: st
         return False
 
 
-def calculate_total_size(categories: List[str] = None) -> float:
+def calculate_total_size(model_set: str = "wan", categories: List[str] = None) -> float:
     """Calculate total download size in GB."""
     total_gb = 0.0
     
-    for category, files in MODELS.items():
+    if model_set not in MODELS:
+        return total_gb
+    
+    for category, files in MODELS[model_set].items():
         if categories and category not in categories:
             continue
         for file_name, file_info in files.items():
@@ -266,6 +310,7 @@ def calculate_total_size(categories: List[str] = None) -> float:
 
 def download_models(
     base_path: Path,
+    model_set: str = "wan",
     categories: List[str] = None,
     dry_run: bool = False,
     civitai_token: str = None
@@ -275,6 +320,7 @@ def download_models(
     
     Args:
         base_path: Base path for ComfyUI installation
+        model_set: Model set to download ("wan" or "qwen")
         categories: List of categories to download (None = all)
         dry_run: If True, only show what would be downloaded
         civitai_token: CivitAI API token for authenticated downloads
@@ -284,8 +330,13 @@ def download_models(
     """
     stats = {"success": 0, "failed": 0, "skipped": 0}
     
+    if model_set not in MODELS:
+        print(f"❌ Invalid model set: {model_set}")
+        print(f"   Available model sets: {', '.join(MODELS.keys())}")
+        return stats
+    
     # Calculate and display total size
-    total_size = calculate_total_size(categories)
+    total_size = calculate_total_size(model_set, categories)
     if total_size > 0:
         print(f"\n📦 Total download size: ~{total_size:.1f} GB")
         if dry_run:
@@ -301,7 +352,7 @@ def download_models(
     
     print()
     
-    for category, files in MODELS.items():
+    for category, files in MODELS[model_set].items():
         if categories and category not in categories:
             continue
             
@@ -345,6 +396,13 @@ def main():
         help="Base path for ComfyUI installation (default: ./src)"
     )
     parser.add_argument(
+        "--model-set",
+        type=str,
+        default="wan",
+        choices=["wan", "qwen"],
+        help="Model set to download: wan (WAN v2.2 image-to-video) or qwen (Qwen image edit) (default: wan)"
+    )
+    parser.add_argument(
         "--categories",
         type=str,
         nargs="+",
@@ -372,12 +430,16 @@ def main():
     # List mode
     if args.list:
         print("\n📋 Available Models:\n")
-        for category, files in MODELS.items():
-            print(f"{category.upper()}:")
-            for file_name, file_info in files.items():
-                print(f"  • {file_name} ({file_info['size_gb']:.1f} GB)")
-                print(f"    Path: {file_info['path']}")
-                print(f"    URL: {file_info['url']}\n")
+        for model_set, categories_dict in MODELS.items():
+            print(f"\n{'='*60}")
+            print(f"Model Set: {model_set.upper()}")
+            print(f"{'='*60}")
+            for category, files in categories_dict.items():
+                print(f"\n{category.upper()}:")
+                for file_name, file_info in files.items():
+                    print(f"  • {file_name} ({file_info['size_gb']:.1f} GB)")
+                    print(f"    Path: {file_info['path']}")
+                    print(f"    URL: {file_info['url']}")
         return
     
     # Verify base path exists
@@ -388,9 +450,9 @@ def main():
     
     print("="*60)
     print("🎨 ComfyUI Model Downloader")
-    print("   WAN Image-to-Video v2.2 Workflow")
     print("="*60)
     print(f"\n📁 Base path: {args.base_path.absolute()}")
+    print(f"🎯 Model set: {args.model_set}")
     
     if args.categories:
         print(f"📦 Categories: {', '.join(args.categories)}")
@@ -400,6 +462,7 @@ def main():
     try:
         stats = download_models(
             args.base_path,
+            model_set=args.model_set,
             categories=args.categories,
             dry_run=args.dry_run,
             civitai_token=args.civitai_token
