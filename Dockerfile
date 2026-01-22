@@ -94,6 +94,17 @@ RUN chmod +x /usr/local/bin/comfy-node-install
 # Prevent pip from asking for confirmation during uninstall steps in custom nodes
 ENV PIP_NO_INPUT=1
 
+# Install custom nodes and pre-cache models
+RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF ComfyUI-WanVideoWrapper comfyui-multigpu comfyui-longlook
+
+# TODO: remove this patch after https://github.com/welltop-cn/ComfyUI-TeaCache/issues/178 is fixed
+WORKDIR /comfyui/custom_nodes
+RUN rm -rf teacache && \
+    git clone https://github.com/welltop-cn/ComfyUI-TeaCache.git teacache && \
+    cd teacache && \
+    git fetch origin pull/180/head && \
+    git checkout FETCH_HEAD
+
 # Copy helper script to switch Manager network mode at container start
 COPY scripts/comfy-manager-set-mode.sh /usr/local/bin/comfy-manager-set-mode
 RUN chmod +x /usr/local/bin/comfy-manager-set-mode
@@ -113,16 +124,6 @@ WORKDIR /comfyui
 
 # Create necessary directories upfront
 RUN mkdir -p models/checkpoints models/vae models/unet models/clip
-
-# Install custom nodes and pre-cache models
-RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF ComfyUI-WanVideoWrapper comfyui-multigpu comfyui-longlook
-
-# TODO: remove this patch after https://github.com/welltop-cn/ComfyUI-TeaCache/issues/178 is fixed
-WORKDIR /comfyui/custom_nodes/teacache
-RUN apt-get update && apt-get install -y git
-RUN git fetch origin pull/180/head && \
-    git checkout a364107d094f5a986cad357ea8ef2a3cb84745e3
-RUN apt-get remove -y git && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
 # Return to root
 WORKDIR /
