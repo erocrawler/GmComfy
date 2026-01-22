@@ -119,8 +119,10 @@ RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI
 
 # TODO: remove this patch after https://github.com/welltop-cn/ComfyUI-TeaCache/issues/178 is fixed
 WORKDIR /comfyui/custom_nodes/teacache
+RUN apt-get update && apt-get install -y git
 RUN git fetch origin pull/180/head && \
     git checkout a364107d094f5a986cad357ea8ef2a3cb84745e3
+RUN apt-get remove -y git && apt-get autoremove -y && apt-get clean -y && rm -rf /var/lib/apt/lists/*
 
 # Return to root
 WORKDIR /
