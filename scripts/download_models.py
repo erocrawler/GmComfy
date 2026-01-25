@@ -87,6 +87,18 @@ MODELS = {
                 "path": "models/unet",
                 "size_gb": 14.5,
                 "sha256": "dd743594590e61f619bba3e80f7a6c44dba20dfaa8e123047de2b21495b8ecdd",
+            },
+            "DasiwaWAN22I2V14BSynthseduction_q8High.gguf": {
+                "url": "https://civitai.com/api/download/models/2554882",
+                "path": "models/unet",
+                "size_gb": 14.5,
+                "sha256": "4db65f7ae6c381562f4acbcd3131bf83df46715752c26c3563220597dd79c207",
+            },
+            "DasiwaWAN22I2V14BSynthseduction_q8Low.gguf": {
+                "url": "https://civitai.com/api/download/models/2554967",
+                "path": "models/unet",
+                "size_gb": 14.5,
+                "sha256": "99cded937de07314c37be06b82319b46585c4d4fef1f1f6d3eba73e4a8fbf102",
             }
         },
         
