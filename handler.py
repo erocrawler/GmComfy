@@ -247,6 +247,13 @@ def upload_input_files(images):
 
     print(f"worker-comfyui - Uploading {len(images)} image(s)...")
 
+    proxies = {
+        "http": os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy"),
+        "https": os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy"),
+    }
+    # Remove empty entries so requests doesn't error on None values
+    proxies = {k: v for k, v in proxies.items() if v}
+
     for image in images:
         try:
             name = image["name"]
@@ -257,7 +264,11 @@ def upload_input_files(images):
 
             if is_url:
                 # Handle URL-based image
-                response = requests.get(image_data, timeout=30)
+                response = requests.get(
+                    image_data,
+                    timeout=30,
+                    proxies=proxies if proxies else None,
+                )
                 response.raise_for_status()
                 blob = response.content
             else:
