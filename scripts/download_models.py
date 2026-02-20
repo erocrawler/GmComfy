@@ -214,6 +214,18 @@ MODELS = {
                 "path": "models/loras",
                 "size_gb": 0.3,
                 "sha256": "8899d52c7aedf8f96395a2a4281da396c0df8fda70fab7347b7adff96b894c74",
+            },
+            "mql_massage_tits_wan22_i2v_v1_high_noise.safetensors": {
+                "url": "https://civitai.com/api/download/models/2210306",
+                "path": "models/loras",
+                "size_gb": 0.3,
+                "sha256": "8ad6b18be9a8333c5a312167aac8aa223a395ebf4a1493ed2f3213d17db2a58d",
+            },
+            "mql_massage_tits_wan22_i2v_v1_low_noise.safetensors": {
+                "url": "https://civitai.com/api/download/models/2210320",
+                "path": "models/loras",
+                "size_gb": 0.3,
+                "sha256": "b04aed102ffc4bbba7ec9d52eece2507d33b6574838684731bbc47842004a763",
             }
         }
     },
@@ -221,12 +233,6 @@ MODELS = {
     "qwen": {
         # Diffusion Models
         "diffusion_models": {
-            "Qwen-Rapid-AIO-SFW-v22.safetensors": {
-                "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v22/Qwen-Rapid-AIO-SFW-v22.safetensors",
-                "path": "models/diffusion_models",
-                "size_gb": 27,
-                "sha256": "8d419320329eef7dce757cef6eca89e670766bfbbe8c346dd78b3def1e109b0d",
-            },
             "Qwen-Rapid-AIO-NSFW-v22.safetensors": {
                 "url": "https://huggingface.co/Phr00t/Qwen-Image-Edit-Rapid-AIO/resolve/main/v22/Qwen-Rapid-AIO-NSFW-v22.safetensors",
                 "path": "models/diffusion_models",
@@ -258,6 +264,23 @@ MODELS = {
                 "path": "models/vae",
                 "size_gb": 0.3,
                 "sha256": "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f",
+            }
+        }
+    },
+    
+    "seedvr2": {
+        "SEEDVR2": {
+            "seedvr2_ema_3b_fp8_e4m3fn.safetensors": {
+                "url": "https://huggingface.co/numz/SeedVR2_comfyUI/resolve/main/seedvr2_ema_3b_fp8_e4m3fn.safetensors",
+                "path": "models/SEEDVR2",
+                "size_gb": 3.39,
+                "sha256": "3bf1e43ebedd570e7e7a0b1b60d6a02e105978f505c8128a241cde99a8240cff",
+            },
+            "ema_vae_fp16.safetensors": {
+                "url": "https://huggingface.co/numz/SeedVR2_comfyUI/resolve/main/ema_vae_fp16.safetensors",
+                "path": "models/SEEDVR2",
+                "size_gb": 0.501,
+                "sha256": "20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1",
             }
         }
     }
@@ -644,8 +667,8 @@ def main():
         "--model-set",
         type=str,
         default="wan",
-        choices=["wan", "qwen"],
-        help="Model set to download: wan (WAN v2.2 image-to-video) or qwen (Qwen image edit) (default: wan)"
+        choices=["wan", "qwen", "seedvr2"],
+        help="Model set to download: wan (WAN v2.2 image-to-video), qwen (Qwen image edit), or seedvr2 (SEED-VR2 video upscaler) (default: wan)"
     )
     parser.add_argument(
         "--categories",
