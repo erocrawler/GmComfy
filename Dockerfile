@@ -75,7 +75,7 @@ RUN uv pip install https://github.com/Dao-AILab/flash-attention/releases/downloa
 RUN /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
 
 # Install Python dependencies declared by the installed ComfyUI workspace
-RUN uv pip install -r /comfyui/requirements.txt --upgrade --break-system-packages
+RUN uv pip install -r /comfyui/requirements.txt --break-system-packages
 
 # Change working directory to ComfyUI
 WORKDIR /comfyui
