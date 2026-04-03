@@ -49,6 +49,7 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
     && uv venv /opt/venv
 
 # Use the virtual environment for all subsequent commands
+ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 # Install PyTorch 2.8
@@ -76,6 +77,9 @@ RUN /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSI
 
 # Install Python dependencies declared by the installed ComfyUI workspace
 RUN uv pip install -r /comfyui/requirements.txt --break-system-packages
+
+# Make the ComfyUI workspace venv resolve to the shared image venv
+RUN rm -rf /comfyui/.venv && ln -s /opt/venv /comfyui/.venv
 
 # Change working directory to ComfyUI
 WORKDIR /comfyui
