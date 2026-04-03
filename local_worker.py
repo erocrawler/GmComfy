@@ -31,7 +31,10 @@ DEFAULT_WORKER_SECRET = os.environ.get('WORKER_TASK_SECRET')
 DEFAULT_SENTINEL_FILE = os.environ.get('WORKER_SENTINEL_FILE', '.worker_stop')
 DEFAULT_CLEANUP_ENABLED = os.environ.get('WORKER_CLEANUP_ENABLED', 'true').lower() == 'true'
 DEFAULT_CLEANUP_AGE_HOURS = float(os.environ.get('WORKER_CLEANUP_AGE_HOURS', 24))
-DEFAULT_OUTPUT_PATH = os.environ.get('COMFY_OUTPUT_PATH', '/workspace/runpod-slim/ComfyUI/output')
+DEFAULT_CLEANUP_DIRS = os.environ.get(
+    'COMFY_CLEANUP_DIRS',
+    '/workspace/runpod-slim/ComfyUI/output,/workspace/runpod-slim/ComfyUI/input'
+).split(',')
 
 
 class LocalWorker:
@@ -39,14 +42,14 @@ class LocalWorker:
     
     def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, sentinel_file: str = DEFAULT_SENTINEL_FILE,
                  cleanup_enabled: bool = DEFAULT_CLEANUP_ENABLED, cleanup_age_hours: float = DEFAULT_CLEANUP_AGE_HOURS,
-                 output_path: str = DEFAULT_OUTPUT_PATH):
+                 cleanup_dirs: list[str] = DEFAULT_CLEANUP_DIRS):
         self.api_url = api_url.rstrip('/')
         self.poll_interval = poll_interval
         self.worker_secret = worker_secret
         self.sentinel_file = sentinel_file
         self.cleanup_enabled = cleanup_enabled
         self.cleanup_age_hours = cleanup_age_hours
-        self.output_path = output_path
+        self.cleanup_dirs = cleanup_dirs
         self.task_url = f"{self.api_url}/api/worker/task"
         logger.info(f"Initialized worker with API URL: {self.api_url}")
         logger.info(f"Poll interval: {self.poll_interval}s")
@@ -54,7 +57,7 @@ class LocalWorker:
         logger.info(f"Output cleanup: {'enabled' if self.cleanup_enabled else 'disabled'}")
         if self.cleanup_enabled:
             logger.info(f"Cleanup age threshold: {self.cleanup_age_hours} hours")
-            logger.info(f"Output path: {self.output_path}")
+            logger.info(f"Cleanup dirs: {', '.join(self.cleanup_dirs)}")
         if not self.worker_secret:
             logger.warning("No WORKER_TASK_SECRET provided; task endpoint may reject requests")
     
@@ -169,48 +172,49 @@ class LocalWorker:
             return
         
         try:
-            output_dir = Path(self.output_path)
-            if not output_dir.exists():
-                logger.debug(f"Output directory {self.output_path} does not exist, skipping cleanup")
-                return
-            
             current_time = time.time()
             age_threshold_seconds = self.cleanup_age_hours * 3600
             deleted_count = 0
             deleted_size = 0
-            
-            logger.debug(f"Starting cleanup of files older than {self.cleanup_age_hours} hours in {self.output_path}")
-            
-            # Walk through all files in output directory
-            for item in output_dir.rglob('*'):
-                if item.is_file():
-                    try:
-                        # Check file age
-                        file_age = current_time - item.stat().st_mtime
-                        
-                        if file_age > age_threshold_seconds:
-                            file_size = item.stat().st_size
-                            item.unlink()
-                            deleted_count += 1
-                            deleted_size += file_size
-                            logger.debug(f"Deleted old file: {item} (age: {file_age / 3600:.1f}h, size: {file_size / 1024 / 1024:.2f}MB)")
-                    except Exception as e:
-                        logger.warning(f"Error deleting file {item}: {e}")
-            
-            # Remove empty directories
-            for item in sorted(output_dir.rglob('*'), reverse=True):
-                if item.is_dir() and not any(item.iterdir()):
-                    try:
-                        item.rmdir()
-                        logger.debug(f"Removed empty directory: {item}")
-                    except Exception as e:
-                        logger.debug(f"Could not remove directory {item}: {e}")
-            
+
+            for dir_path in self.cleanup_dirs:
+                target_dir = Path(dir_path)
+                if not target_dir.exists():
+                    logger.debug(f"Directory {dir_path} does not exist, skipping cleanup")
+                    continue
+
+                logger.debug(f"Starting cleanup of files older than {self.cleanup_age_hours} hours in {dir_path}")
+
+                # Walk through all files in directory
+                for item in target_dir.rglob('*'):
+                    if item.is_file():
+                        try:
+                            # Check file age
+                            file_age = current_time - item.stat().st_mtime
+
+                            if file_age > age_threshold_seconds:
+                                file_size = item.stat().st_size
+                                item.unlink()
+                                deleted_count += 1
+                                deleted_size += file_size
+                                logger.debug(f"Deleted old file: {item} (age: {file_age / 3600:.1f}h, size: {file_size / 1024 / 1024:.2f}MB)")
+                        except Exception as e:
+                            logger.warning(f"Error deleting file {item}: {e}")
+
+                # Remove empty directories
+                for item in sorted(target_dir.rglob('*'), reverse=True):
+                    if item.is_dir() and not any(item.iterdir()):
+                        try:
+                            item.rmdir()
+                            logger.debug(f"Removed empty directory: {item}")
+                        except Exception as e:
+                            logger.debug(f"Could not remove directory {item}: {e}")
+
             if deleted_count > 0:
                 logger.info(f"Cleanup complete: deleted {deleted_count} file(s), freed {deleted_size / 1024 / 1024:.2f} MB")
             else:
                 logger.debug("Cleanup complete: no old files found")
-                
+
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
     
@@ -304,12 +308,14 @@ def main():
         help=f'Delete output files older than this many hours (default: {DEFAULT_CLEANUP_AGE_HOURS})'
     )
     parser.add_argument(
-        '--output-path',
-        default=DEFAULT_OUTPUT_PATH,
-        help=f'ComfyUI output directory path (default: {DEFAULT_OUTPUT_PATH})'
+        '--cleanup-dirs',
+        nargs='+',
+        default=DEFAULT_CLEANUP_DIRS,
+        help=f'Directories to clean up (default: {DEFAULT_CLEANUP_DIRS})'
     )
     parser.add_argument(
         '--debug',
+
         action='store_true',
         help='Enable debug logging'
     )
@@ -328,7 +334,7 @@ def main():
         sentinel_file=args.sentinel_file,
         cleanup_enabled=args.cleanup_enabled,
         cleanup_age_hours=args.cleanup_age_hours,
-        output_path=args.output_path
+        cleanup_dirs=args.cleanup_dirs
     )
     
     try:
