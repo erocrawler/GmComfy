@@ -104,6 +104,12 @@ ENV PIP_NO_INPUT=1
 # Install custom nodes and pre-cache models
 RUN comfy-node-install comfyui-kjnodes comfyui-videohelpersuite teacache ComfyUI-WanMoeKSampler comfyui_layerstyle ComfyUI-Crystools ComfyUI-GGUF ComfyUI-WanVideoWrapper comfyui-multigpu comfyui-longlook seedvr2_videoupscaler
 
+# Install ComfyUI-PromptRelay custom node
+WORKDIR /comfyui/custom_nodes
+RUN git clone https://github.com/kijai/ComfyUI-PromptRelay.git && \
+    cd ComfyUI-PromptRelay && \
+    uv pip install -r requirements.txt --break-system-packages
+
 # TODO: remove this patch after https://github.com/welltop-cn/ComfyUI-TeaCache/issues/178 is fixed
 WORKDIR /comfyui/custom_nodes
 RUN rm -rf teacache && \
