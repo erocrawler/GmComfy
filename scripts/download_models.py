@@ -283,6 +283,41 @@ MODELS = {
                 "sha256": "20678548f420d98d26f11442d3528f8b8c94e57ee046ef93dbb7633da8612ca1",
             }
         }
+    },
+
+    "minimax": {
+        # MiniMax H3 (image/video-to-video with audio). Text encoder, VAEs, and
+        # the pruned FP8 diffusion model required by the MiniMax H3 workflow.
+        "clip": {
+            "qwen3vl_32b_h3_ultra_uncensored_heretic_int8_convrot.safetensors": {
+                "url": "https://huggingface.co/ethanfel/Qwen3-VL-32B-Ultra-Heretic-H3-ComfyUI-INT8-ConvRot/resolve/main/qwen3vl_32b_h3_ultra_uncensored_heretic_int8_convrot.safetensors",
+                "path": "models/clip",
+                "size_gb": 26.4,
+                "sha256": "d84547412144b7c50a6ec77437a889b869d3ace88da77ef1775d3d2a4901c192",
+            }
+        },
+
+        "vae": {
+            "minimax_h3_video_vae_fp16.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors",
+                "path": "models/vae",
+                "size_gb": 5.21,
+            },
+            "minimax_h3_audio_vae_fp32.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors",
+                "path": "models/vae",
+                "size_gb": 0.605,
+            }
+        },
+
+        # Diffusion Models
+        "diffusion_models": {
+            "minimax_h3_fl2va_pruned_fp8_scaled.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+                "path": "models/diffusion_models",
+                "size_gb": 21,
+            }
+        }
     }
 }
 
@@ -667,8 +702,8 @@ def main():
         "--model-set",
         type=str,
         default="wan",
-        choices=["wan", "qwen", "seedvr2"],
-        help="Model set to download: wan (WAN v2.2 image-to-video), qwen (Qwen image edit), or seedvr2 (SEED-VR2 video upscaler) (default: wan)"
+        choices=["wan", "qwen", "seedvr2", "minimax"],
+        help="Model set to download: wan (WAN v2.2 image-to-video), qwen (Qwen image edit), seedvr2 (SEED-VR2 video upscaler), or minimax (MiniMax H3 image-to-video with audio) (default: wan)"
     )
     parser.add_argument(
         "--categories",
