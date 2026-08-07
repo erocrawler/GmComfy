@@ -1,3 +1,7 @@
 # Requirements for download_models.py script
 requests>=2.31.0
 tqdm>=4.66.0
+# Optional: Rust-based multi-threaded downloader — dramatically speeds up
+# HuggingFace downloads (auto-detected by the script; requests fallback if absent)
+hf-transfer>=0.1.4
+

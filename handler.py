@@ -171,6 +171,19 @@ def validate_input(job_input):
                 "'images' must be a list of objects with 'name' and 'image' keys",
             )
 
+    # Validate 'videos' in input, if provided
+    # Same shape as 'images': list of { 'name', 'image' } where 'image' is a
+    # base64 encoded string or a URL. Uploaded via /upload/video (VHS LoadVideo).
+    videos = job_input.get("videos")
+    if videos is not None:
+        if not isinstance(videos, list) or not all(
+            "name" in video and "image" in video for video in videos
+        ):
+            return (
+                None,
+                "'videos' must be a list of objects with 'name' and 'image' keys",
+            )
+
     # Optional: API key for Comfy.org API Nodes, passed per-request
     comfy_org_api_key = job_input.get("comfy_org_api_key")
     
@@ -178,7 +191,7 @@ def validate_input(job_input):
     node_weights = job_input.get("node_weights")
 
     # Build validated response. Only include comfy_org_api_key if it was provided
-    validated = {"workflow": workflow, "images": images}
+    validated = {"workflow": workflow, "images": images, "videos": videos}
     if comfy_org_api_key is not None:
         validated["comfy_org_api_key"] = comfy_org_api_key
     if node_weights is not None and isinstance(node_weights, dict):
@@ -227,25 +240,28 @@ def check_server(url, retries=500, delay=50):
     return False
 
 
-def upload_input_files(images):
+def upload_input_files(items, endpoint="image"):
     """
-    Upload a list of images (base64 encoded or URLs) to the ComfyUI server using the /upload/image endpoint.
+    Upload a list of input files (base64 encoded or URLs) to the ComfyUI server.
 
     Args:
-        images (list): A list of dictionaries, each containing:
-                       - 'name': The filename for the image
-                       - 'image': Either a base64 encoded string or a URL to the image
+        items (list): A list of dictionaries, each containing:
+                       - 'name': The filename for the file
+                       - 'image': Either a base64 encoded string or a URL to the file
+        endpoint (str): The upload endpoint to use ('image' -> /upload/image,
+                        'video' -> /upload/video). Defaults to 'image'.
 
     Returns:
         dict: A dictionary indicating success or error.
     """
-    if not images:
-        return {"status": "success", "message": "No images to upload", "details": []}
+    if not items:
+        return {"status": "success", "message": "No files to upload", "details": []}
 
     responses = []
     upload_errors = []
 
-    print(f"worker-comfyui - Uploading {len(images)} image(s)...")
+    upload_path = f"/upload/{endpoint}"
+    print(f"worker-comfyui - Uploading {len(items)} {endpoint}(s)...")
 
     proxies = {
         "http": os.environ.get("HTTP_PROXY") or os.environ.get("http_proxy"),
@@ -254,78 +270,81 @@ def upload_input_files(images):
     # Remove empty entries so requests doesn't error on None values
     proxies = {k: v for k, v in proxies.items() if v}
 
-    for image in images:
+    for item in items:
         try:
-            name = image["name"]
-            image_data = image["image"]  # Get the full string (URL or base64)
+            name = item["name"]
+            item_data = item["image"]  # Get the full string (URL or base64)
 
             # Determine if this is a URL or base64 data
-            is_url = image_data.startswith(("http://", "https://"))
+            is_url = item_data.startswith(("http://", "https://"))
 
             if is_url:
-                # Handle URL-based image
+                # Handle URL-based file
                 response = requests.get(
-                    image_data,
+                    item_data,
                     timeout=30,
                     proxies=proxies if proxies else None,
                 )
                 response.raise_for_status()
                 blob = response.content
             else:
-                # Handle base64 encoded image
+                # Handle base64 encoded file
                 # --- Strip Data URI prefix if present ---
-                if "," in image_data:
+                if "," in item_data:
                     # Find the comma and take everything after it
-                    base64_data = image_data.split(",", 1)[1]
+                    base64_data = item_data.split(",", 1)[1]
                 else:
                     # Assume it's already pure base64
-                    base64_data = image_data
+                    base64_data = item_data
                 # --- End strip ---
 
                 blob = base64.b64decode(base64_data)  # Decode the cleaned data
 
-            # Prepare the form data
+            # Prepare the form data (VHS LoadVideo reads the "video" field;
+            # plain image upload uses the "image" field)
+            field_name = "video" if endpoint == "video" else "image"
+            mime_type = "video/mp4" if endpoint == "video" else "image/png"
             files = {
-                "image": (name, BytesIO(blob), "image/png"),
+                field_name: (name, BytesIO(blob), mime_type),
                 "overwrite": (None, "true"),
             }
 
-            # POST request to upload the image
+            # POST request to upload the file
             response = requests.post(
-                f"http://{COMFY_HOST}/upload/image", files=files, timeout=30
+                f"http://{COMFY_HOST}{upload_path}", files=files, timeout=60
             )
             response.raise_for_status()
 
             responses.append(f"Successfully uploaded {name}")
 
         except base64.binascii.Error as e:
-            error_msg = f"Error decoding base64 for {image.get('name', 'unknown')}: {e}"
+            error_msg = f"Error decoding base64 for {item.get('name', 'unknown')}: {e}"
             print(f"worker-comfyui - {error_msg}")
             upload_errors.append(error_msg)
         except requests.Timeout:
-            error_msg = f"Timeout uploading {image.get('name', 'unknown')}"
+            error_msg = f"Timeout uploading {item.get('name', 'unknown')}"
             print(f"worker-comfyui - {error_msg}")
             upload_errors.append(error_msg)
         except requests.RequestException as e:
-            error_msg = f"Error uploading {image.get('name', 'unknown')}: {e}"
+            error_msg = f"Error uploading {item.get('name', 'unknown')}: {e}"
             print(f"worker-comfyui - {error_msg}")
             upload_errors.append(error_msg)
         except Exception as e:
             error_msg = (
-                f"Unexpected error uploading {image.get('name', 'unknown')}: {e}"
+                f"Unexpected error uploading {item.get('name', 'unknown')}: {e}"
             )
             print(f"worker-comfyui - {error_msg}")
             upload_errors.append(error_msg)
 
     if upload_errors:
-        print(f"worker-comfyui - image(s) upload finished with errors")
+        print(f"worker-comfyui - {endpoint}(s) upload finished with errors")
         return {
             "status": "error",
-            "message": "Some images failed to upload",
+            "message": f"Some {endpoint}s failed to upload",
             "details": upload_errors,
         }
 
-    print(f"worker-comfyui - image(s) upload complete")
+    print(f"worker-comfyui - {endpoint}(s) upload complete")
     return {
         "status": "success",
         "message": "All images uploaded successfully",
@@ -764,11 +783,27 @@ def handler(job):
 
     # Upload input images if they exist
     if input_images:
-        upload_result = upload_input_files(input_images)
+        upload_result = upload_input_files(input_images, endpoint="image")
         if upload_result["status"] == "error":
             # Return upload errors
             err_result = {
                 "error": "Failed to upload one or more input images",
+                "details": upload_result["details"],
+            }
+            try:
+                _send_webhook_notification(job_id, err_result)
+            except Exception:
+                pass
+            return err_result
+
+    # Upload input videos if they exist (reference videos for ref2v workflows)
+    input_videos = validated_data.get("videos")
+    if input_videos:
+        upload_result = upload_input_files(input_videos, endpoint="video")
+        if upload_result["status"] == "error":
+            # Return upload errors
+            err_result = {
+                "error": "Failed to upload one or more input videos",
                 "details": upload_result["details"],
             }
             try:

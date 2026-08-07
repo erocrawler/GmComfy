@@ -21,7 +21,9 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         input_data = {"workflow": {"key": "value"}}
         validated_data, error = handler.validate_input(input_data)
         self.assertIsNone(error)
-        self.assertEqual(validated_data, {"workflow": {"key": "value"}, "images": None})
+        self.assertEqual(
+            validated_data, {"workflow": {"key": "value"}, "images": None, "videos": None}
+        )
 
     def test_valid_input_with_workflow_and_images(self):
         input_data = {
@@ -31,6 +33,26 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         validated_data, error = handler.validate_input(input_data)
         self.assertIsNone(error)
         self.assertEqual(validated_data, input_data)
+
+    def test_valid_input_with_workflow_and_videos(self):
+        input_data = {
+            "workflow": {"key": "value"},
+            "videos": [{"name": "ref.mp4", "image": "base64string"}],
+        }
+        validated_data, error = handler.validate_input(input_data)
+        self.assertIsNone(error)
+        self.assertEqual(validated_data, input_data)
+
+    def test_input_with_invalid_videos_structure(self):
+        input_data = {
+            "workflow": {"key": "value"},
+            "videos": [{"name": "ref.mp4"}],  # Missing 'image' key
+        }
+        validated_data, error = handler.validate_input(input_data)
+        self.assertIsNotNone(error)
+        self.assertEqual(
+            error, "'videos' must be a list of objects with 'name' and 'image' keys"
+        )
 
     def test_input_missing_workflow(self):
         input_data = {"images": [{"name": "image1.png", "image": "base64string"}]}
@@ -59,7 +81,9 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         input_data = '{"workflow": {"key": "value"}}'
         validated_data, error = handler.validate_input(input_data)
         self.assertIsNone(error)
-        self.assertEqual(validated_data, {"workflow": {"key": "value"}, "images": None})
+        self.assertEqual(
+            validated_data, {"workflow": {"key": "value"}, "images": None, "videos": None}
+        )
 
     def test_empty_input(self):
         input_data = None
@@ -246,14 +270,14 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         """Test upload_input_files with empty list returns success with no details"""
         result = handler.upload_input_files([])
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["message"], "No images to upload")
+        self.assertEqual(result["message"], "No files to upload")
         self.assertEqual(result["details"], [])
 
     def test_upload_input_files_none(self):
         """Test upload_input_files with None returns success with no details"""
         result = handler.upload_input_files(None)
         self.assertEqual(result["status"], "success")
-        self.assertEqual(result["message"], "No images to upload")
+        self.assertEqual(result["message"], "No files to upload")
         self.assertEqual(result["details"], [])
 
     @patch("handler.requests.post")

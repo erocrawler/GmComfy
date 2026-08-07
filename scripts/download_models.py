@@ -16,6 +16,14 @@ from threading import Lock
 import tempfile
 import hashlib
 
+# Optional hf_transfer — Rust-based multi-threaded downloader that dramatically
+# speeds up HuggingFace downloads. Auto-detected; falls back to requests if absent.
+try:
+    import hf_transfer  # type: ignore
+    HF_TRANSFER_AVAILABLE = True
+except ImportError:
+    HF_TRANSFER_AVAILABLE = False
+
 
 # Model configurations organized by model set
 MODELS = {
@@ -371,7 +379,51 @@ def compute_file_sha256(file_path: Path) -> str:
     return sha256_hash.hexdigest()
 
 
-def download_file(url: str, dest_path: Path, desc: str = None, civitai_token: str = None, num_segments: int = 4, sha256: str = None) -> Tuple[bool, Path]:
+def _download_file_hf_transfer(url: str, dest_path: Path, sha256: str = None) -> Tuple[bool, Path]:
+    """
+    Download using hf_transfer (Rust multi-threaded downloader) for HuggingFace files.
+    Much faster than the pure-Python requests path for large models.
+    """
+    try:
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        max_files = int(os.environ.get('HF_TRANSFER_MAX_THREADS', '16'))
+        print(f"⚡ Using hf_transfer ({max_files} parallel chunks) for {dest_path.name}")
+        # hf_transfer.download(url, filename, max_files, chunk_size, parallel_failures, max_retries)
+        # downloads directly to filename and raises (and deletes the partial file) on error.
+        # Note: parallel_failures and max_retries must both be 0 or both non-zero.
+        # A real User-Agent is required — hf_transfer sends none by default, which
+        # Cloudflare/HF CDN may reject with 403.
+        hf_transfer.download(
+            url=url,
+            filename=str(dest_path),
+            max_files=max_files,
+            chunk_size=10_485_760,  # 10 MiB per chunk
+            parallel_failures=3,
+            max_retries=5,
+            headers={"user-agent": "comfy-model-downloader/1.0 (hf_transfer)"},
+        )
+
+        if sha256:
+            print(f"\n🔍 Verifying checksum...")
+            computed = compute_file_sha256(dest_path)
+            if computed.lower() != sha256.lower():
+                print(f"✗ Checksum mismatch!")
+                print(f"  Expected: {sha256}")
+                print(f"  Got:      {computed}")
+                dest_path.unlink()
+                return (False, dest_path)
+            print(f"✓ Checksum verified: {computed[:16]}...")
+
+        print(f"✓ Downloaded {dest_path.name}")
+        return (True, dest_path)
+    except Exception as e:
+        print(f"✗ hf_transfer failed for {dest_path.name}: {e}")
+        if dest_path.exists():
+            dest_path.unlink()
+        return (False, dest_path)
+
+
+def download_file(url: str, dest_path: Path, desc: str = None, civitai_token: str = None, num_segments: int = 4, sha256: str = None, hf_transfer_enabled: bool = False) -> Tuple[bool, Path]:
     """
     Download a file with progress bar, using multi-segment download for large files.
     
@@ -410,6 +462,29 @@ def download_file(url: str, dest_path: Path, desc: str = None, civitai_token: st
         if civitai_token and 'civitai.com' in url:
             separator = '&' if '?' in url else '?'
             download_url = f"{url}{separator}token={civitai_token}"
+        
+        # Fast path: hf_transfer for HuggingFace resolve URLs (only HF supports it).
+        # Falls back to the requests-based path below on any failure.
+        if hf_transfer_enabled and 'huggingface.co' in download_url and '/resolve/' in download_url:
+            # Xet-backed repos (Comfy-Org/MiniMax-H3, some Qwen/GGUF repos) redirect
+            # resolve URLs to the Xet CDN, which rejects hf_transfer's parallel range
+            # requests with 403. Probe the final URL once and skip hf_transfer for those.
+            xet_backed = False
+            try:
+                probe = requests.head(download_url, allow_redirects=True, timeout=30)
+                final_host = probe.url.lower()
+                # Xet CDN hosts include: xet-bridge-us / xet-bridge / xethub / cas-bridge
+                xet_backed = any(h in final_host for h in ('xet-bridge', 'xethub', 'cas-bridge'))
+            except Exception:
+                pass
+
+            if xet_backed:
+                print(f"ℹ️ {dest_path.name} is Xet-backed — skipping hf_transfer (using requests downloader)")
+            else:
+                result = _download_file_hf_transfer(download_url, dest_path, sha256)
+                if result[0]:
+                    return result
+                print(f"⚠️ hf_transfer failed for {dest_path.name}, falling back to requests-based download\n")
         
         # First request to get file size and check for range support
         response = requests.head(download_url, timeout=30)
@@ -569,7 +644,8 @@ def download_models(
     dry_run: bool = False,
     civitai_token: str = None,
     max_workers: int = 4,
-    segments_per_file: int = 4
+    segments_per_file: int = 4,
+    hf_transfer_enabled: bool = False
 ) -> Dict[str, int]:
     """
     Download all configured models using multi-threading.
@@ -582,6 +658,7 @@ def download_models(
         civitai_token: CivitAI API token for authenticated downloads
         max_workers: Maximum number of concurrent file downloads
         segments_per_file: Number of segments for large file multi-segment downloads
+        hf_transfer_enabled: Use hf_transfer for HuggingFace downloads when available
         
     Returns:
         Dictionary with success/failure counts
@@ -664,7 +741,8 @@ def download_models(
                 task["file_name"],
                 task["civitai_token"],
                 task["segments"],
-                task["sha256"]
+                task["sha256"],
+                hf_transfer_enabled
             ): task for task in download_tasks
         }
         
@@ -744,8 +822,28 @@ def main():
         action="store_true",
         help="Compute and display SHA256 checksums for all files in the model-set"
     )
+    parser.add_argument(
+        "--hf-transfer",
+        action="store_true",
+        help="Force use hf_transfer for HuggingFace downloads (requires 'pip install hf-transfer'); errors if not installed"
+    )
+    parser.add_argument(
+        "--no-hf-transfer",
+        action="store_true",
+        help="Disable hf_transfer even if installed (default: auto-use when available)"
+    )
     
     args = parser.parse_args()
+
+    # Resolve hf_transfer usage
+    if args.hf_transfer and args.no_hf_transfer:
+        print("❌ --hf-transfer and --no-hf-transfer are mutually exclusive")
+        sys.exit(1)
+    if args.hf_transfer and not HF_TRANSFER_AVAILABLE:
+        print("❌ --hf-transfer requested but hf_transfer is not installed.")
+        print("   Install it with: pip install hf-transfer")
+        sys.exit(1)
+    hf_transfer_enabled = HF_TRANSFER_AVAILABLE and not args.no_hf_transfer
     
     # Compute checksums mode
     if args.compute_checksums:
@@ -815,6 +913,11 @@ def main():
     
     print(f"⚙️  Max workers: {args.max_workers}")
     print(f"⚙️  Segments per file: {args.segments}")
+    if hf_transfer_enabled:
+        print(f"⚡ hf_transfer: ENABLED (HuggingFace downloads will be multi-threaded via Rust)")
+        print(f"   Tip: with hf_transfer active, try --max-workers 1-2 since each file is already parallelized")
+    else:
+        print(f"⚡ hf_transfer: unavailable (pip install hf-transfer for faster HuggingFace downloads)")
     
     try:
         stats = download_models(
@@ -824,7 +927,8 @@ def main():
             dry_run=args.dry_run,
             civitai_token=args.civitai_token,
             max_workers=args.max_workers,
-            segments_per_file=args.segments
+            segments_per_file=args.segments,
+            hf_transfer_enabled=hf_transfer_enabled
         )
         
         # Print summary
