@@ -173,7 +173,9 @@ def validate_input(job_input):
 
     # Validate 'videos' in input, if provided
     # Same shape as 'images': list of { 'name', 'image' } where 'image' is a
-    # base64 encoded string or a URL. Uploaded via /upload/video (VHS LoadVideo).
+    # base64 encoded string or a URL. Uploaded via /upload/image (ComfyUI's
+    # generic upload stores ANY file into input/, where VHS_LoadVideo reads it
+    # by filename).
     videos = job_input.get("videos")
     if videos is not None:
         if not isinstance(videos, list) or not all(
@@ -244,12 +246,17 @@ def upload_input_files(items, endpoint="image"):
     """
     Upload a list of input files (base64 encoded or URLs) to the ComfyUI server.
 
+    ComfyUI has NO /upload/video endpoint — its only upload route is
+    /upload/image, which stores ANY file (images, videos, ...) into the
+    input/ directory. VideoHelperSuite's VHS_LoadVideo reads videos from
+    input/ by filename, exactly like LoadImage reads images, so videos go
+    through the same /upload/image route.
+
     Args:
         items (list): A list of dictionaries, each containing:
                        - 'name': The filename for the file
                        - 'image': Either a base64 encoded string or a URL to the file
-        endpoint (str): The upload endpoint to use ('image' -> /upload/image,
-                        'video' -> /upload/video). Defaults to 'image'.
+        endpoint (str): Kept for API symmetry; always uploads via /upload/image.
 
     Returns:
         dict: A dictionary indicating success or error.
@@ -260,7 +267,6 @@ def upload_input_files(items, endpoint="image"):
     responses = []
     upload_errors = []
 
-    upload_path = f"/upload/{endpoint}"
     print(f"worker-comfyui - Uploading {len(items)} {endpoint}(s)...")
 
     proxies = {
@@ -300,18 +306,18 @@ def upload_input_files(items, endpoint="image"):
 
                 blob = base64.b64decode(base64_data)  # Decode the cleaned data
 
-            # Prepare the form data (VHS LoadVideo reads the "video" field;
-            # plain image upload uses the "image" field)
-            field_name = "video" if endpoint == "video" else "image"
+            # ComfyUI's generic upload (field "image") stores ANY file into
+            # input/. The form field is always "image"; the mime type hints
+            # the content so it's saved with the right extension.
             mime_type = "video/mp4" if endpoint == "video" else "image/png"
             files = {
-                field_name: (name, BytesIO(blob), mime_type),
+                "image": (name, BytesIO(blob), mime_type),
                 "overwrite": (None, "true"),
             }
 
             # POST request to upload the file
             response = requests.post(
-                f"http://{COMFY_HOST}{upload_path}", files=files, timeout=60
+                f"http://{COMFY_HOST}/upload/image", files=files, timeout=60
             )
             response.raise_for_status()
 
