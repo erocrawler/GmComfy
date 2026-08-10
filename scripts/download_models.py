@@ -295,13 +295,49 @@ MODELS = {
 
     "minimax": {
         # MiniMax H3 (image/video-to-video with audio). Text encoder, VAEs, and
-        # the pruned FP8 diffusion model required by the MiniMax H3 workflow.
+        # the pruned INT8 ConvRot diffusion models (fl2va + ref2va) required by
+        # the MiniMax H3 workflows.
         "clip": {
             "qwen3vl_32b_h3_ultra_uncensored_heretic_int8_convrot.safetensors": {
                 "url": "https://huggingface.co/ethanfel/Qwen3-VL-32B-Ultra-Heretic-H3-ComfyUI-INT8-ConvRot/resolve/main/qwen3vl_32b_h3_ultra_uncensored_heretic_int8_convrot.safetensors",
                 "path": "models/clip",
                 "size_gb": 26.4,
                 "sha256": "d84547412144b7c50a6ec77437a889b869d3ace88da77ef1775d3d2a4901c192",
+            }
+        },
+
+        
+        # LoRAs
+        "loras": {
+            "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": {
+                "url": "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/main/minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.6,
+                "sha256": "7098acf3ee75028fd9fcd948f50fcc8d995057fabb76f86bd3ca2c0ffc58e409",
+            },
+            "HMNSFW_AIO_V2.safetensors": {
+                "url": "https://civitai.com/api/download/models/3206518",
+                "path": "models/loras",
+                "size_gb": 0.3,
+                "sha256": "608e4212f2788b6063330ff1196fc1f4b4228cfd9a413a63c198a09d7e4a61cb",
+            },
+            "H3_Motion_Booster.safetensors": {
+                "url": "https://civitai.com/api/download/models/3205912",
+                "path": "models/loras",
+                "size_gb": 0.3,
+                "sha256": "1b14d8cf9e23bab6c063b507434dd954de0c55b6540c7a457f76cd25fa84c95d",
+            },
+            "SynthPussy_H3_closeups_v1-step00008300.safetensors": {
+                "url": "https://civitai.com/api/download/models/3204862",
+                "path": "models/loras",
+                "size_gb": 0.2,
+                "sha256": "3adf7fe23c81fdcffc2335c1182cd5c9b19685c6ee6405cb778dbb5c252e1482",
+            },
+            "Mini_Dick_Fix_V1.safetensors": {
+                "url": "https://civitai.com/api/download/models/3207332",
+                "path": "models/loras",
+                "size_gb": 0.2,
+                "sha256": "8d7286d73cdbbee1b82d925db85d73dae8bd52c35d7d674ed5fc47cd9b568ee7",
             }
         },
 
@@ -318,12 +354,19 @@ MODELS = {
             }
         },
 
-        # Diffusion Models
+        # Diffusion Models (INT8 ConvRot — faster than FP8 with equivalent quality)
         "diffusion_models": {
-            "minimax_h3_fl2va_pruned_fp8_scaled.safetensors": {
-                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_fp8_scaled.safetensors",
+            "minimax_h3_fl2va_pruned_int8_convrot.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
                 "path": "models/diffusion_models",
                 "size_gb": 21,
+                "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+            },
+            "minimax_h3_ref2va_pruned_int8_convrot.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+                "path": "models/diffusion_models",
+                "size_gb": 21,
+                "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779",
             }
         }
     }
