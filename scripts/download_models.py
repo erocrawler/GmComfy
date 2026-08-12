@@ -338,7 +338,19 @@ MODELS = {
                 "path": "models/loras",
                 "size_gb": 0.2,
                 "sha256": "8d7286d73cdbbee1b82d925db85d73dae8bd52c35d7d674ed5fc47cd9b568ee7",
-            }
+            },
+            "stomach_bulge_H3_i2v_v1.0.safetensors": {
+                "url": "https://civitai.red/api/download/models/3213696?fileId=3095416",
+                "path": "models/loras",
+                "size_gb": 0.2,
+                "sha256": "bda0bf433496e4bb1732381d2f79fda671222e080c9484addef6a0ae83e44c2f",
+            },
+            "NaughtyTimes_pruned_r128_v2.safetensors": {
+                "url": "https://civitai.red/api/download/models/3212436?fileId=3094155",
+                "path": "models/loras",
+                "size_gb": 1.04,
+                "sha256": "a0629cc32abe3ff7deb78ed7bca2bec1e8ff914b46302b78029e10613875c4e5",
+            },
         },
 
         "vae": {

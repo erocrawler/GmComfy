@@ -28,6 +28,7 @@ logger = logging.getLogger('local-worker')
 DEFAULT_API_URL = os.environ.get('WORKER_API_URL', 'http://localhost:5173')
 DEFAULT_POLL_INTERVAL = int(os.environ.get('WORKER_POLL_INTERVAL', 5))
 DEFAULT_WORKER_SECRET = os.environ.get('WORKER_TASK_SECRET')
+DEFAULT_USER_ID = os.environ.get('WORKER_USER_ID')
 DEFAULT_SENTINEL_FILE = os.environ.get('WORKER_SENTINEL_FILE', '.worker_stop')
 DEFAULT_CLEANUP_ENABLED = os.environ.get('WORKER_CLEANUP_ENABLED', 'true').lower() == 'true'
 DEFAULT_CLEANUP_AGE_HOURS = float(os.environ.get('WORKER_CLEANUP_AGE_HOURS', 24))
@@ -40,12 +41,14 @@ DEFAULT_CLEANUP_DIRS = os.environ.get(
 class LocalWorker:
     """Worker that polls for and processes local jobs"""
     
-    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, sentinel_file: str = DEFAULT_SENTINEL_FILE,
+    def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, user_id: str | None = None,
+                 sentinel_file: str = DEFAULT_SENTINEL_FILE,
                  cleanup_enabled: bool = DEFAULT_CLEANUP_ENABLED, cleanup_age_hours: float = DEFAULT_CLEANUP_AGE_HOURS,
                  cleanup_dirs: list[str] = DEFAULT_CLEANUP_DIRS):
         self.api_url = api_url.rstrip('/')
         self.poll_interval = poll_interval
         self.worker_secret = worker_secret
+        self.user_id = user_id
         self.sentinel_file = sentinel_file
         self.cleanup_enabled = cleanup_enabled
         self.cleanup_age_hours = cleanup_age_hours
@@ -54,6 +57,8 @@ class LocalWorker:
         logger.info(f"Initialized worker with API URL: {self.api_url}")
         logger.info(f"Poll interval: {self.poll_interval}s")
         logger.info(f"Sentinel file: {self.sentinel_file}")
+        if self.user_id:
+            logger.info(f"Scoped to user: {self.user_id}")
         logger.info(f"Output cleanup: {'enabled' if self.cleanup_enabled else 'disabled'}")
         if self.cleanup_enabled:
             logger.info(f"Cleanup age threshold: {self.cleanup_age_hours} hours")
@@ -73,6 +78,8 @@ class LocalWorker:
             headers = {}
             if self.worker_secret:
                 headers['x-worker-secret'] = self.worker_secret
+            if self.user_id:
+                headers['x-worker-user-id'] = self.user_id
             response = requests.get(self.task_url, headers=headers, timeout=10)
             
             if response.status_code == 404:
@@ -291,6 +298,11 @@ def main():
         help='Shared secret for /api/worker/task authentication (env WORKER_TASK_SECRET)'
     )
     parser.add_argument(
+        '--user-id',
+        default=DEFAULT_USER_ID,
+        help='Only claim jobs belonging to this user (env WORKER_USER_ID)'
+    )
+    parser.add_argument(
         '--sentinel-file',
         default=DEFAULT_SENTINEL_FILE,
         help=f'Sentinel file path for graceful shutdown (default: {DEFAULT_SENTINEL_FILE})'
@@ -331,6 +343,7 @@ def main():
         api_url=args.api_url,
         poll_interval=args.poll_interval,
         worker_secret=args.worker_secret,
+        user_id=args.user_id,
         sentinel_file=args.sentinel_file,
         cleanup_enabled=args.cleanup_enabled,
         cleanup_age_hours=args.cleanup_age_hours,
