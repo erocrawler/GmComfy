@@ -32,7 +32,10 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         }
         validated_data, error = handler.validate_input(input_data)
         self.assertIsNone(error)
-        self.assertEqual(validated_data, input_data)
+        self.assertEqual(
+            validated_data,
+            {"workflow": {"key": "value"}, "images": input_data["images"], "videos": None},
+        )
 
     def test_valid_input_with_workflow_and_videos(self):
         input_data = {
@@ -41,7 +44,10 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         }
         validated_data, error = handler.validate_input(input_data)
         self.assertIsNone(error)
-        self.assertEqual(validated_data, input_data)
+        self.assertEqual(
+            validated_data,
+            {"workflow": {"key": "value"}, "images": None, "videos": input_data["videos"]},
+        )
 
     def test_input_with_invalid_videos_structure(self):
         input_data = {
@@ -316,7 +322,9 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         self.assertEqual(len(result["details"]), 1)
         self.assertIn("Successfully uploaded remote_image.png", result["details"][0])
-        mock_get.assert_called_once_with("https://example.com/image.png", timeout=30)
+        mock_get.assert_called_once_with(
+            "https://example.com/image.png", timeout=30, proxies=None
+        )
         mock_post.assert_called_once()
 
     @patch("handler.requests.post")
@@ -699,3 +707,151 @@ class TestRunpodWorkerComfy(unittest.TestCase):
         # Should succeed on first try
         self.assertEqual(resp.status_code, 200)
         mock_post.assert_called_once()
+
+
+class TestMemoryMonitor(unittest.TestCase):
+    """Tests for the cgroup-aware ComfyUI /free memory monitor."""
+
+    def setUp(self):
+        # Deterministic: bypass psutil so the file-based probes are exercised,
+        # re-enable the monitor (some tests disable it), and clear the cooldown.
+        handler._psutil = None
+        handler.COMFY_MEMORY_MONITOR = True
+        handler._last_free_attempt = 0.0
+
+    @staticmethod
+    def _open_side_effect(files):
+        """Build a builtins.open replacement that serves per-path contents."""
+
+        def _side_effect(path, *args, **kwargs):
+            if path not in files:
+                raise FileNotFoundError(path)
+            handle = mock_open(read_data=files[path])
+            return handle(path, *args, **kwargs)
+
+        return _side_effect
+
+    # --- cgroup / fallback probes ---------------------------------------
+
+    def test_cgroup_v2_limited(self):
+        files = {
+            "/sys/fs/cgroup/memory.current": "5368709120\n",    # 5 GiB
+            "/sys/fs/cgroup/memory.max": "10737418240\n",       # 10 GiB
+        }
+        with patch("builtins.open", side_effect=self._open_side_effect(files)):
+            pct = handler._get_memory_usage_percent()
+        self.assertIsNotNone(pct)
+        self.assertAlmostEqual(pct, 50.0, places=2)
+
+    def test_cgroup_v2_unlimited_falls_back_to_proc(self):
+        files = {
+            "/sys/fs/cgroup/memory.current": "5368709120\n",
+            "/sys/fs/cgroup/memory.max": "max\n",
+            "/proc/meminfo": "MemTotal:       16777216 kB\nMemAvailable:    4194304 kB\n",
+        }
+        with patch("builtins.open", side_effect=self._open_side_effect(files)):
+            pct = handler._get_memory_usage_percent()
+        self.assertIsNotNone(pct)
+        self.assertAlmostEqual(pct, 75.0, places=2)
+
+    def test_cgroup_v1_limited(self):
+        files = {
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes": "268435456\n",    # 256 MiB
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes": "1073741824\n",   # 1 GiB
+        }
+        with patch("builtins.open", side_effect=self._open_side_effect(files)):
+            pct = handler._get_memory_usage_percent()
+        self.assertIsNotNone(pct)
+        self.assertAlmostEqual(pct, 25.0, places=2)
+
+    def test_cgroup_v1_unlimited_falls_back_to_proc(self):
+        files = {
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes": "268435456\n",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes": "9223372036854771712\n",
+            "/proc/meminfo": "MemTotal:       16777216 kB\nMemAvailable:    8388608 kB\n",
+        }
+        with patch("builtins.open", side_effect=self._open_side_effect(files)):
+            pct = handler._get_memory_usage_percent()
+        self.assertIsNotNone(pct)
+        self.assertAlmostEqual(pct, 50.0, places=2)
+
+    def test_no_memory_sources_returns_none(self):
+        with patch("builtins.open", side_effect=self._open_side_effect({})):
+            pct = handler._get_memory_usage_percent()
+        self.assertIsNone(pct)
+
+    # --- queue guard ------------------------------------------------------
+
+    def test_comfy_queue_idle_true(self):
+        resp = Mock()
+        resp.status_code = 200
+        resp.json.return_value = {"queue_running": [], "queue_pending": []}
+        with patch("handler.requests.get", return_value=resp):
+            self.assertTrue(handler._comfy_queue_idle())
+
+    def test_comfy_queue_idle_false_when_busy(self):
+        resp = Mock()
+        resp.status_code = 200
+        resp.json.return_value = {
+            "queue_running": [{"prompt_id": "abc"}],
+            "queue_pending": [],
+        }
+        with patch("handler.requests.get", return_value=resp):
+            self.assertFalse(handler._comfy_queue_idle())
+
+    # --- /free call -------------------------------------------------------
+
+    def test_free_comfyui_memory_posts_payload(self):
+        resp = Mock()
+        resp.status_code = 200
+        with patch("handler.requests.post", return_value=resp) as mock_post:
+            result = handler._free_comfyui_memory(" (test)")
+        self.assertTrue(result)
+        mock_post.assert_called_once_with(
+            f"http://{handler.COMFY_HOST}/free",
+            json={"unload_models": True, "free_memory": True},
+            timeout=handler.COMFY_FREE_TIMEOUT_S,
+        )
+
+    # --- decision logic ---------------------------------------------------
+
+    def test_maybe_free_below_limit_skips(self):
+        with patch.object(handler, "_get_memory_usage_percent", return_value=50.0), \
+             patch.object(handler, "_free_comfyui_memory") as mock_free:
+            handler._maybe_free_comfyui_memory()
+        mock_free.assert_not_called()
+
+    def test_maybe_free_above_limit_idle_calls_free(self):
+        with patch.object(handler, "_get_memory_usage_percent", return_value=95.0), \
+             patch.object(handler, "_comfy_queue_idle", return_value=True), \
+             patch.object(handler, "_free_comfyui_memory") as mock_free:
+            handler._maybe_free_comfyui_memory(" (test)")
+        mock_free.assert_called_once_with(" (test)")
+
+    def test_maybe_free_above_limit_busy_skips(self):
+        with patch.object(handler, "_get_memory_usage_percent", return_value=95.0), \
+             patch.object(handler, "_comfy_queue_idle", return_value=False), \
+             patch.object(handler, "_free_comfyui_memory") as mock_free:
+            handler._maybe_free_comfyui_memory()
+        mock_free.assert_not_called()
+
+    def test_maybe_free_cooldown_suppresses_second_call(self):
+        with patch.object(handler, "_get_memory_usage_percent", return_value=95.0), \
+             patch.object(handler, "_comfy_queue_idle", return_value=True), \
+             patch.object(handler, "_free_comfyui_memory") as mock_free:
+            handler._maybe_free_comfyui_memory()
+            handler._maybe_free_comfyui_memory()
+        mock_free.assert_called_once()
+
+    def test_maybe_free_unknown_usage_noop(self):
+        with patch.object(handler, "_get_memory_usage_percent", return_value=None), \
+             patch.object(handler, "_free_comfyui_memory") as mock_free:
+            handler._maybe_free_comfyui_memory()
+        mock_free.assert_not_called()
+
+    def test_maybe_free_disabled_noop(self):
+        handler.COMFY_MEMORY_MONITOR = False
+        with patch.object(handler, "_get_memory_usage_percent", return_value=99.0), \
+             patch.object(handler, "_free_comfyui_memory") as mock_free:
+            handler._maybe_free_comfyui_memory()
+        mock_free.assert_not_called()

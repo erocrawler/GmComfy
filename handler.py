@@ -42,6 +42,184 @@ COMFY_HOST = os.environ.get("COMFY_HOST", "127.0.0.1:8188")
 REFRESH_WORKER = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
+# Memory monitoring: POST /free to ComfyUI when system RAM is too high.
+#
+# Mitigates ComfyUI memory leaks (cached models / VAE buffers that are never
+# released). Runs once per job (pre-job), before any prompt is queued.
+# Safeguards:
+#   • Only frees while ComfyUI's queue is idle, so in-flight generations are
+#     never disturbed by model unloading.
+#   • A cooldown prevents hammering the /free endpoint.
+# Tuning via environment variables:
+#   COMFY_MEMORY_MONITOR          enable/disable this feature (default "true")
+#   COMFY_MEMORY_LIMIT_PERCENT    % of system RAM that triggers /free (default 85)
+#   COMFY_MEMORY_FREE_COOLDOWN_S  min seconds between /free calls (default 300)
+#   COMFY_FREE_TIMEOUT_S          timeout for /free and /queue calls (default 10)
+# ---------------------------------------------------------------------------
+COMFY_MEMORY_MONITOR = os.environ.get("COMFY_MEMORY_MONITOR", "true").lower() == "true"
+COMFY_MEMORY_LIMIT_PERCENT = float(os.environ.get("COMFY_MEMORY_LIMIT_PERCENT", 85))
+COMFY_MEMORY_FREE_COOLDOWN_S = float(os.environ.get("COMFY_MEMORY_FREE_COOLDOWN_S", 300))
+COMFY_FREE_TIMEOUT_S = float(os.environ.get("COMFY_FREE_TIMEOUT_S", 10))
+
+try:
+    import psutil as _psutil  # optional; last-resort fallback after cgroup probes
+except ImportError:
+    _psutil = None
+
+_free_lock = threading.Lock()
+_last_free_attempt = 0.0
+
+
+def _cgroup_v2_memory_percent():
+    """Return memory usage % from cgroup v2, or None if unavailable/unlimited.
+
+    Docker (cgroup v2) enforces OOM at the container limit, not the host's RAM,
+    so host-level info (/proc/meminfo, psutil) can look healthy while the
+    container is about to be OOM-killed. Uses:
+        /sys/fs/cgroup/memory.current  (current usage in bytes)
+        /sys/fs/cgroup/memory.max      (limit in bytes, or "max" if unlimited)
+    """
+    try:
+        with open("/sys/fs/cgroup/memory.current") as f:
+            current = int(f.read().strip())
+        with open("/sys/fs/cgroup/memory.max") as f:
+            limit_raw = f.read().strip()
+        if limit_raw in ("", "max"):  # no cgroup limit configured
+            return None
+        limit = int(limit_raw)
+        if limit <= 0:
+            return None
+        return (current / limit) * 100.0
+    except Exception as exc:
+        print(f"worker-comfyui - cgroup v2 memory check failed: {exc}")
+        return None
+
+
+def _cgroup_v1_memory_percent():
+    """Return memory usage % from cgroup v1, or None if unavailable/unlimited.
+
+    Older Docker hosts mount cgroup v1 memory controller at
+    /sys/fs/cgroup/memory/memory.{usage,limit}_in_bytes. An "unlimited" limit
+    is reported as a ~2^63 sentinel, which we treat as no limit.
+    """
+    try:
+        with open("/sys/fs/cgroup/memory/memory.usage_in_bytes") as f:
+            current = int(f.read().strip())
+        with open("/sys/fs/cgroup/memory/memory.limit_in_bytes") as f:
+            limit = int(f.read().strip())
+        if limit <= 0 or limit >= (1 << 60):  # unlimited sentinel
+            return None
+        return (current / limit) * 100.0
+    except Exception as exc:
+        print(f"worker-comfyui - cgroup v1 memory check failed: {exc}")
+        return None
+
+
+def _get_memory_usage_percent():
+    """Return current memory usage as a percentage (0-100), or None if unknown.
+
+    Priority (Docker-aware):
+      1. cgroup v2  (/sys/fs/cgroup/memory.{current,max})  – the real container limit
+      2. cgroup v1  (/sys/fs/cgroup/memory/memory.*_in_bytes)
+      3. psutil     (host RAM, only meaningful when not in a limited container)
+      4. /proc/meminfo (host RAM, last resort)
+    """
+    for probe in (_cgroup_v2_memory_percent, _cgroup_v1_memory_percent):
+        usage = probe()
+        if usage is not None:
+            return usage
+
+    if _psutil is not None:
+        try:
+            return _psutil.virtual_memory().percent
+        except Exception as exc:
+            print(f"worker-comfyui - psutil memory check failed: {exc}")
+
+    try:
+        with open("/proc/meminfo") as f:
+            meminfo = {}
+            for line in f:
+                key, value = line.split(":", 1)
+                meminfo[key.strip()] = int(value.strip().split()[0])  # kB
+        total = meminfo.get("MemTotal")
+        available = meminfo.get("MemAvailable")
+        if total and available:
+            return (1.0 - available / total) * 100.0
+    except Exception as exc:
+        print(f"worker-comfyui - /proc/meminfo memory check failed: {exc}")
+    return None
+
+
+def _comfy_queue_idle():
+    """Return True when ComfyUI has no running or pending prompts."""
+    try:
+        resp = requests.get(f"http://{COMFY_HOST}/queue", timeout=COMFY_FREE_TIMEOUT_S)
+        if resp.status_code != 200:
+            return False
+        data = resp.json()
+        return not data.get("queue_running") and not data.get("queue_pending")
+    except Exception as exc:
+        print(f"worker-comfyui - Could not check ComfyUI queue: {exc}")
+        return False
+
+
+def _free_comfyui_memory(reason=""):
+    """POST /free to ComfyUI to unload cached models and free RAM/VRAM.
+
+    Returns True on success. Only call while the queue is idle.
+    """
+    payload = {"unload_models": True, "free_memory": True}
+    try:
+        resp = requests.post(
+            f"http://{COMFY_HOST}/free", json=payload, timeout=COMFY_FREE_TIMEOUT_S
+        )
+        resp.raise_for_status()
+        print(f"worker-comfyui - ComfyUI /free executed successfully{reason}.")
+        return True
+    except Exception as exc:
+        print(f"worker-comfyui - ComfyUI /free failed{reason}: {exc}")
+        return False
+
+
+def _maybe_free_comfyui_memory(reason=""):
+    """Free ComfyUI memory if RAM usage exceeds the limit (with safeguards).
+
+    Safe to call from handler() entry. Enforces a cooldown between /free calls
+    and skips while ComfyUI is busy.
+    """
+    global _last_free_attempt
+    if not COMFY_MEMORY_MONITOR:
+        return
+
+    usage = _get_memory_usage_percent()
+    if usage is None:
+        return
+    print(
+        f"worker-comfyui - System memory usage: {usage:.1f}% "
+        f"(limit {COMFY_MEMORY_LIMIT_PERCENT:.0f}%)"
+    )
+
+    if usage < COMFY_MEMORY_LIMIT_PERCENT:
+        return
+
+    with _free_lock:
+        now = time.time()
+        if now - _last_free_attempt < COMFY_MEMORY_FREE_COOLDOWN_S:
+            print("worker-comfyui - Memory above limit but within /free cooldown, skipping.")
+            return
+        if not _comfy_queue_idle():
+            print("worker-comfyui - Memory above limit but ComfyUI is busy, skipping /free.")
+            return
+        _last_free_attempt = now
+
+    print(
+        f"worker-comfyui - Memory at {usage:.1f}% (limit {COMFY_MEMORY_LIMIT_PERCENT:.0f}%) "
+        f"- freeing ComfyUI memory{reason}"
+    )
+    _free_comfyui_memory(reason)
+
+
+# ---------------------------------------------------------------------------
 # Helper: quick reachability probe of ComfyUI HTTP endpoint (port 8188)
 # ---------------------------------------------------------------------------
 
@@ -786,6 +964,14 @@ def handler(job):
         except Exception:
             pass
         return err_result
+
+    # Mitigate memory leaks between jobs: free ComfyUI if system RAM is too high.
+    # At this point no prompt is queued yet, so ComfyUI should be idle and the
+    # queue guard inside _maybe_free_comfyui_memory keeps this safe regardless.
+    try:
+        _maybe_free_comfyui_memory(" (pre-job)")
+    except Exception as exc:
+        print(f"worker-comfyui - Pre-job memory check failed: {exc}")
 
     # Upload input images if they exist
     if input_images:
