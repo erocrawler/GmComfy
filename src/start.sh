@@ -12,48 +12,43 @@ echo "worker-comfyui: Starting ComfyUI"
 # Allow operators to tweak verbosity; default is INFO.
 : "${COMFY_LOG_LEVEL:=INFO}"
 
+# Echo the given CLI flag if the env var (with default) resolves to "true".
+# Usage: add_flag <env_var> <default> <cli_flag> <enable_message>
+add_flag() {
+    local env_var="$1" default="$2" flag="$3" message="$4"
+    local value="${!env_var:-$default}"
+    if [ "$value" = "true" ]; then
+        echo "worker-comfyui: $message"
+        printf '%s' "$flag"
+    fi
+}
+
+# Collect the ComfyUI CLI arguments common to every launch path.
+COMFY_ARGS="--disable-auto-launch --disable-metadata --fast-disk --disable-pinned-memory"
+
 # Support enabling a high-VRAM mode via env var `COMFY_HIGH_VRAM`
 # Usage: set COMFY_HIGH_VRAM=true in environment to enable.
-COMFY_HIGH_VRAM=${COMFY_HIGH_VRAM:-false}
-
-if [ "$COMFY_HIGH_VRAM" = "true" ]; then
-    echo "worker-comfyui: High VRAM mode enabled"
-    HIGH_VRAM_ARG="--highvram"
-else
-    HIGH_VRAM_ARG=""
-fi
+COMFY_ARGS="${COMFY_ARGS} $(add_flag COMFY_HIGH_VRAM false --highvram 'High VRAM mode enabled')"
 
 # Support enabling/disabling sage attention via env var `COMFY_USE_SAGE_ATTENTION`
 # Usage: set COMFY_USE_SAGE_ATTENTION=false in environment to disable (default is true).
-COMFY_USE_SAGE_ATTENTION=${COMFY_USE_SAGE_ATTENTION:-true}
-
-if [ "$COMFY_USE_SAGE_ATTENTION" = "true" ]; then
-    echo "worker-comfyui: Sage attention enabled"
-    SAGE_ATTENTION_ARG="--use-sage-attention"
-else
-    SAGE_ATTENTION_ARG=""
-fi
+COMFY_ARGS="${COMFY_ARGS} $(add_flag COMFY_USE_SAGE_ATTENTION true --use-sage-attention 'Sage attention enabled')"
 
 # Support enabling flash attention via env var `USE_FLASH_ATTN`
 # Usage: set USE_FLASH_ATTN=true in environment to enable.
-USE_FLASH_ATTN=${USE_FLASH_ATTN:-false}
+COMFY_ARGS="${COMFY_ARGS} $(add_flag USE_FLASH_ATTN false --use-flash-attention 'Flash attention enabled')"
 
-if [ "$USE_FLASH_ATTN" = "true" ]; then
-    echo "worker-comfyui: Flash attention enabled"
-    FLASH_ATTN_ARG="--use-flash-attention"
-else
-    FLASH_ATTN_ARG=""
-fi
+COMFY_ARGS="${COMFY_ARGS} --verbose ${COMFY_LOG_LEVEL} --log-stdout"
 
 # Serve the API and don't shutdown the container
 if [ "$SERVE_API_LOCALLY" == "true" ]; then
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata ${HIGH_VRAM_ARG} ${SAGE_ATTENTION_ARG} ${FLASH_ATTN_ARG} --listen --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
-
-    echo "worker-comfyui: Starting RunPod Handler"
-    python -u /handler.py --rp_serve_api --rp_api_host=0.0.0.0
+    COMFY_ARGS="${COMFY_ARGS} --listen"
+    HANDLER_ARGS="--rp_serve_api --rp_api_host=0.0.0.0"
 else
-    python -u /comfyui/main.py --disable-auto-launch --disable-metadata ${HIGH_VRAM_ARG} ${SAGE_ATTENTION_ARG} ${FLASH_ATTN_ARG} --verbose "${COMFY_LOG_LEVEL}" --log-stdout &
-
-    echo "worker-comfyui: Starting RunPod Handler"
-    python -u /handler.py
+    HANDLER_ARGS=""
 fi
+
+python -u /comfyui/main.py ${COMFY_ARGS} &
+
+echo "worker-comfyui: Starting RunPod Handler"
+python -u /handler.py ${HANDLER_ARGS}
