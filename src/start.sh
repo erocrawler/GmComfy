@@ -13,12 +13,11 @@ echo "worker-comfyui: Starting ComfyUI"
 : "${COMFY_LOG_LEVEL:=INFO}"
 
 # Echo the given CLI flag if the env var (with default) resolves to "true".
-# Usage: add_flag <env_var> <default> <cli_flag> <enable_message>
+# Usage: add_flag <env_var> <default> <cli_flag>
 add_flag() {
-    local env_var="$1" default="$2" flag="$3" message="$4"
+    local env_var="$1" default="$2" flag="$3"
     local value="${!env_var:-$default}"
     if [ "$value" = "true" ]; then
-        echo "worker-comfyui: $message"
         printf '%s' "$flag"
     fi
 }
@@ -28,15 +27,15 @@ COMFY_ARGS="--disable-auto-launch --disable-metadata --fast-disk --disable-pinne
 
 # Support enabling a high-VRAM mode via env var `COMFY_HIGH_VRAM`
 # Usage: set COMFY_HIGH_VRAM=true in environment to enable.
-COMFY_ARGS="${COMFY_ARGS} $(add_flag COMFY_HIGH_VRAM false --highvram 'High VRAM mode enabled')"
+COMFY_ARGS="${COMFY_ARGS} $(add_flag COMFY_HIGH_VRAM false --highvram)"
 
 # Support enabling/disabling sage attention via env var `COMFY_USE_SAGE_ATTENTION`
 # Usage: set COMFY_USE_SAGE_ATTENTION=false in environment to disable (default is true).
-COMFY_ARGS="${COMFY_ARGS} $(add_flag COMFY_USE_SAGE_ATTENTION true --use-sage-attention 'Sage attention enabled')"
+COMFY_ARGS="${COMFY_ARGS} $(add_flag COMFY_USE_SAGE_ATTENTION true --use-sage-attention)"
 
 # Support enabling flash attention via env var `USE_FLASH_ATTN`
 # Usage: set USE_FLASH_ATTN=true in environment to enable.
-COMFY_ARGS="${COMFY_ARGS} $(add_flag USE_FLASH_ATTN false --use-flash-attention 'Flash attention enabled')"
+COMFY_ARGS="${COMFY_ARGS} $(add_flag USE_FLASH_ATTN false --use-flash-attention)"
 
 COMFY_ARGS="${COMFY_ARGS} --verbose ${COMFY_LOG_LEVEL} --log-stdout"
 
