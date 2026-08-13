@@ -84,6 +84,15 @@ _free_lock = threading.Lock()
 _last_free_attempt = 0.0
 _last_restart_time = 0.0  # monotonic-ish guard against ComfyUI restart loops
 
+# In-flight final webhook delivery threads. The completion notification is sent
+# on a daemon thread so the handler can return immediately (serverless
+# throughput). A process that exits while such a thread is still retrying loses
+# the completion webhook, so callers that shut down right after a job (e.g. the
+# local worker on its sentinel file) must drain these via
+# wait_for_pending_webhooks() first.
+_active_webhook_threads: list = []
+_active_webhook_lock = threading.Lock()
+
 
 def _cgroup_v2_memory_percent():
     """Return memory usage % from cgroup v2, or None if unavailable/unlimited.
@@ -971,6 +980,44 @@ def upload_output_files(job_id, file_path):
     url = f"{endpoint}/{bucket}/{key}"
     return url
 
+
+def wait_for_pending_webhooks(timeout_s: float | None = None) -> bool:
+    """Block until all in-flight webhook delivery threads have finished.
+
+    The final job notification is delivered on a daemon thread so the handler
+    can return immediately; a process that exits while that thread is still
+    retrying (e.g. the local worker hitting its stop sentinel right after a
+    job) silently drops the completion webhook and the job stays stuck in
+    'processing' on the server until the poll timeout. Serverless pods don't
+    need this (the process lives on between jobs), but the local worker must
+    call it after every task.
+
+    Args:
+        timeout_s: Maximum seconds to wait, or None to wait until all threads
+                   finish.
+
+    Returns:
+        True if all in-flight webhook deliveries completed (or there were
+        none); False if timeout_s elapsed with threads still pending.
+    """
+    deadline = None if timeout_s is None else time.time() + timeout_s
+    while True:
+        with _active_webhook_lock:
+            threads = list(_active_webhook_threads)
+        if not threads:
+            return True
+        for t in threads:
+            remaining = None if deadline is None else max(0.0, deadline - time.time())
+            t.join(timeout=remaining)
+        if deadline is not None and time.time() >= deadline:
+            return False
+        # Threads may have finished and removed themselves while we joined;
+        # re-check so we don't return while others are still running.
+        with _active_webhook_lock:
+            if not _active_webhook_threads:
+                return True
+
+
 def handler(job):
     """
     Handles a job using ComfyUI via websockets for status and image retrieval.
@@ -1085,12 +1132,26 @@ def handler(job):
         
         # If async_mode is enabled, run webhook retries in background thread
         if async_mode:
+            def _run_and_cleanup():
+                # Remove self from the registry when done so that
+                # wait_for_pending_webhooks() can tell delivery finished.
+                try:
+                    _retry_webhook()
+                finally:
+                    with _active_webhook_lock:
+                        try:
+                            _active_webhook_threads.remove(thread)
+                        except ValueError:
+                            pass
+
             thread = threading.Thread(
-                target=_retry_webhook,
+                target=_run_and_cleanup,
                 name=f"webhook-{job_id[:8]}",
                 daemon=True  # Daemon thread won't prevent process exit
             )
             thread.start()
+            with _active_webhook_lock:
+                _active_webhook_threads.append(thread)
             print(f"worker-comfyui - Webhook notification started in background thread.")
             return True  # Return immediately, don't wait for thread
         else:

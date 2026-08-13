@@ -16,6 +16,7 @@ import logging
 import shutil
 from pathlib import Path
 from handler import handler as comfy_handler
+from handler import wait_for_pending_webhooks
 
 # Configure logging
 logging.basicConfig(
@@ -136,7 +137,23 @@ class LocalWorker:
         try:
             logger.info(f"Calling ComfyUI handler for job {job_id}")
             result = comfy_handler(job)
-            
+
+            # The handler delivers the final completion webhook on a background
+            # thread so it can return immediately. We must wait for that
+            # delivery to finish before continuing: if the stop sentinel file
+            # appears right after this task, the worker would otherwise exit
+            # while the webhook is still being retried and the job would stay
+            # stuck in 'processing' on the server. Normal case costs <1s.
+            try:
+                drained = wait_for_pending_webhooks(timeout_s=120)
+                if not drained:
+                    logger.warning(
+                        f"Webhook delivery for job {job_id} still in progress after 120s; "
+                        f"shutting down now could lose it"
+                    )
+            except Exception as e:
+                logger.error(f"Error waiting for webhook delivery for job {job_id}: {e}")
+
             if result.get('error'):
                 logger.error(f"Job {job_id} failed: {result.get('error')}")
             else:
