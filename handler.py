@@ -10,6 +10,8 @@ import websocket
 import uuid
 import tempfile
 import socket
+import signal
+import subprocess
 import traceback
 import boto3
 from botocore.config import Config as BConfig
@@ -42,24 +44,36 @@ COMFY_HOST = os.environ.get("COMFY_HOST", "127.0.0.1:8188")
 REFRESH_WORKER = os.environ.get("REFRESH_WORKER", "false").lower() == "true"
 
 # ---------------------------------------------------------------------------
-# Memory monitoring: POST /free to ComfyUI when system RAM is too high.
+# Memory monitoring: POST /free to ComfyUI when system RAM is too high, and
+# optionally escalate to a full ComfyUI restart when /free cannot reclaim the
+# memory (i.e. the leak lives inside ComfyUI itself).
 #
-# Mitigates ComfyUI memory leaks (cached models / VAE buffers that are never
-# released). Runs once per job (pre-job), before any prompt is queued.
+# Runs once per job (pre-job), before any prompt is queued.
 # Safeguards:
 #   • Only frees while ComfyUI's queue is idle, so in-flight generations are
 #     never disturbed by model unloading.
 #   • A cooldown prevents hammering the /free endpoint.
+#   • Restart escalation re-checks memory after /free and only kills ComfyUI
+#     when usage is still above the limit; start.sh's supervisor loop brings
+#     the process back up. A min-uptime guard prevents restart loops.
 # Tuning via environment variables:
-#   COMFY_MEMORY_MONITOR          enable/disable this feature (default "true")
-#   COMFY_MEMORY_LIMIT_PERCENT    % of system RAM that triggers /free (default 85)
-#   COMFY_MEMORY_FREE_COOLDOWN_S  min seconds between /free calls (default 300)
-#   COMFY_FREE_TIMEOUT_S          timeout for /free and /queue calls (default 10)
+#   COMFY_MEMORY_MONITOR           enable/disable this feature (default "true")
+#   COMFY_MEMORY_LIMIT_PERCENT     % of system RAM that triggers /free (default 85)
+#   COMFY_MEMORY_FREE_COOLDOWN_S   min seconds between /free calls (default 300)
+#   COMFY_FREE_TIMEOUT_S           timeout for /free and /queue calls (default 10)
+#   COMFY_MEMORY_RESTART           restart ComfyUI if still over limit after /free (default "true")
+#   COMFY_MEMORY_VERIFY_DELAY_S    wait after /free before re-checking memory (default 10)
+#   COMFY_RESTART_MIN_UPTIME_S     min seconds between ComfyUI restarts (default 300)
+#   COMFY_RESTART_WAIT_MAX_RETRIES API polls while waiting for ComfyUI to return (default 120)
 # ---------------------------------------------------------------------------
 COMFY_MEMORY_MONITOR = os.environ.get("COMFY_MEMORY_MONITOR", "true").lower() == "true"
 COMFY_MEMORY_LIMIT_PERCENT = float(os.environ.get("COMFY_MEMORY_LIMIT_PERCENT", 85))
 COMFY_MEMORY_FREE_COOLDOWN_S = float(os.environ.get("COMFY_MEMORY_FREE_COOLDOWN_S", 300))
 COMFY_FREE_TIMEOUT_S = float(os.environ.get("COMFY_FREE_TIMEOUT_S", 10))
+COMFY_MEMORY_RESTART = os.environ.get("COMFY_MEMORY_RESTART", "true").lower() == "true"
+COMFY_MEMORY_VERIFY_DELAY_S = float(os.environ.get("COMFY_MEMORY_VERIFY_DELAY_S", 10))
+COMFY_RESTART_MIN_UPTIME_S = float(os.environ.get("COMFY_RESTART_MIN_UPTIME_S", 300))
+COMFY_RESTART_WAIT_MAX_RETRIES = int(os.environ.get("COMFY_RESTART_WAIT_MAX_RETRIES", 120))
 
 try:
     import psutil as _psutil  # optional; last-resort fallback after cgroup probes
@@ -68,6 +82,7 @@ except ImportError:
 
 _free_lock = threading.Lock()
 _last_free_attempt = 0.0
+_last_restart_time = 0.0  # monotonic-ish guard against ComfyUI restart loops
 
 
 def _cgroup_v2_memory_percent():
@@ -181,13 +196,105 @@ def _free_comfyui_memory(reason=""):
         return False
 
 
+def _comfyui_pids():
+    """Return PIDs of processes listening on the ComfyUI HTTP port.
+
+    Uses psutil when available (precise, no external tools), falling back to
+    `pgrep -f` on the ComfyUI entrypoint when psutil is missing.
+    """
+    pids = set()
+    try:
+        port = int(COMFY_HOST.rsplit(":", 1)[-1])
+    except (ValueError, IndexError):
+        port = 8188
+
+    if _psutil is not None:
+        try:
+            for conn in _psutil.net_connections(kind="tcp"):
+                if conn.laddr and conn.laddr.port == port and conn.pid:
+                    pids.add(conn.pid)
+        except Exception as exc:
+            print(f"worker-comfyui - psutil port scan failed: {exc}")
+
+    if not pids:
+        try:
+            out = subprocess.run(
+                ["pgrep", "-f", "/comfyui/main.py"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            for line in out.stdout.splitlines():
+                pid = line.strip()
+                if pid.isdigit():
+                    pids.add(int(pid))
+        except Exception as exc:
+            print(f"worker-comfyui - pgrep fallback failed: {exc}")
+    return list(pids)
+
+
+def _kill_comfyui(reason=""):
+    """Kill the ComfyUI process so the start.sh supervisor loop restarts it.
+
+    In serverless mode start.sh runs ComfyUI inside a restart loop, so killing
+    the process is the way to force a fully fresh ComfyUI state when a memory
+    leak lives inside ComfyUI itself and /free cannot reclaim it.
+
+    Returns True if at least one process was signalled.
+    """
+    pids = _comfyui_pids()
+    if not pids:
+        print(f"worker-comfyui - No ComfyUI process found to kill{reason}.")
+        return False
+
+    killed = False
+    for pid in pids:
+        try:
+            if _psutil is not None:
+                _psutil.Process(pid).kill()
+            else:
+                os.kill(pid, signal.SIGKILL)
+            killed = True
+            print(f"worker-comfyui - Killed ComfyUI process {pid}{reason}.")
+        except Exception as exc:
+            print(f"worker-comfyui - Failed to kill ComfyUI process {pid}: {exc}")
+    return killed
+
+
+def _wait_for_comfyui_restart():
+    """Poll until the ComfyUI HTTP API is reachable again after a restart.
+
+    The start.sh supervisor loop restarts ComfyUI within a couple of seconds,
+    but boot takes longer. Returns True once the API responds, False if the
+    retry budget is exhausted (the next job's check_server will retry anyway).
+    """
+    print(f"worker-comfyui - Waiting for ComfyUI to come back after restart...")
+    ok = check_server(
+        f"http://{COMFY_HOST}/",
+        COMFY_RESTART_WAIT_MAX_RETRIES,
+        COMFY_API_AVAILABLE_INTERVAL_MS,
+    )
+    if ok:
+        print("worker-comfyui - ComfyUI is back up after restart.")
+    else:
+        print(
+            "worker-comfyui - ComfyUI did not come back within the wait budget "
+            "after restart; the next job will retry."
+        )
+    return ok
+
+
 def _maybe_free_comfyui_memory(reason=""):
     """Free ComfyUI memory if RAM usage exceeds the limit (with safeguards).
 
     Safe to call from handler() entry. Enforces a cooldown between /free calls
     and skips while ComfyUI is busy.
+
+    When COMFY_MEMORY_RESTART is enabled and memory is still above the limit a
+    short while after /free, the leak is likely inside ComfyUI itself – the
+    process is killed and start.sh's supervisor loop restarts it fresh.
     """
-    global _last_free_attempt
+    global _last_free_attempt, _last_restart_time
     if not COMFY_MEMORY_MONITOR:
         return
 
@@ -217,6 +324,46 @@ def _maybe_free_comfyui_memory(reason=""):
         f"- freeing ComfyUI memory{reason}"
     )
     _free_comfyui_memory(reason)
+
+    # --- Restart escalation -----------------------------------------------
+    # /free may not help when the leak lives inside ComfyUI itself (cached
+    # buffers it never releases). Re-check memory shortly after /free; if it is
+    # still above the limit, kill ComfyUI – the start.sh supervisor loop
+    # restarts it with a clean process. Controlled by COMFY_MEMORY_RESTART.
+    if not COMFY_MEMORY_RESTART:
+        return
+
+    time.sleep(COMFY_MEMORY_VERIFY_DELAY_S)
+    usage_after = _get_memory_usage_percent()
+    if usage_after is None or usage_after < COMFY_MEMORY_LIMIT_PERCENT:
+        print(
+            f"worker-comfyui - Memory after /free: "
+            f"{usage_after if usage_after is not None else 'unknown'}% "
+            f"- below limit, no ComfyUI restart needed."
+        )
+        return
+
+    with _free_lock:
+        now = time.time()
+        if now - _last_restart_time < COMFY_RESTART_MIN_UPTIME_S:
+            print(
+                f"worker-comfyui - Memory still at {usage_after:.1f}% but ComfyUI "
+                f"restarted {now - _last_restart_time:.0f}s ago "
+                f"(min uptime {COMFY_RESTART_MIN_UPTIME_S:.0f}s), skipping restart."
+            )
+            return
+        _last_restart_time = now
+
+    print(
+        f"worker-comfyui - Memory still at {usage_after:.1f}% "
+        f"(limit {COMFY_MEMORY_LIMIT_PERCENT:.0f}%) after /free{reason} "
+        f"- restarting ComfyUI."
+    )
+    if _kill_comfyui(
+        f"{reason} (post-/free recheck {usage_after:.1f}% >= "
+        f"{COMFY_MEMORY_LIMIT_PERCENT:.0f}%)"
+    ):
+        _wait_for_comfyui_restart()
 
 
 # ---------------------------------------------------------------------------

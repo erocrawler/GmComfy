@@ -47,7 +47,26 @@ else
     HANDLER_ARGS=""
 fi
 
-python -u /comfyui/main.py ${COMFY_ARGS} &
+# Restart delay for the ComfyUI supervisor loop (seconds).
+: "${COMFY_RESTART_DELAY_S:=2}"
+
+# Run ComfyUI inside a supervisor loop. In serverless mode there is no external
+# process manager, so this loop plays that role: whenever the ComfyUI process
+# exits - a crash, an OOM-kill, or an intentional kill from the handler's memory
+# monitor (COMFY_MEMORY_RESTART=true) - it is restarted with a fresh process.
+# Handlers poll the HTTP API (check_server) before each job, so they wait for
+# the restart to complete.
+restart_comfyui() {
+    while true; do
+        echo "worker-comfyui: Starting ComfyUI"
+        python -u /comfyui/main.py ${COMFY_ARGS}
+        exit_code=$?
+        echo "worker-comfyui: ComfyUI exited (code ${exit_code}); restarting in ${COMFY_RESTART_DELAY_S}s..."
+        sleep "${COMFY_RESTART_DELAY_S}"
+    done
+}
+
+restart_comfyui &
 
 echo "worker-comfyui: Starting RunPod Handler"
 python -u /handler.py ${HANDLER_ARGS}

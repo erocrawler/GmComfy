@@ -714,10 +714,13 @@ class TestMemoryMonitor(unittest.TestCase):
 
     def setUp(self):
         # Deterministic: bypass psutil so the file-based probes are exercised,
-        # re-enable the monitor (some tests disable it), and clear the cooldown.
+        # re-enable the monitor (some tests disable it), clear the cooldown,
+        # and disable restart escalation (tests opt in explicitly).
         handler._psutil = None
         handler.COMFY_MEMORY_MONITOR = True
+        handler.COMFY_MEMORY_RESTART = False
         handler._last_free_attempt = 0.0
+        handler._last_restart_time = 0.0
 
     @staticmethod
     def _open_side_effect(files):
@@ -855,3 +858,78 @@ class TestMemoryMonitor(unittest.TestCase):
              patch.object(handler, "_free_comfyui_memory") as mock_free:
             handler._maybe_free_comfyui_memory()
         mock_free.assert_not_called()
+
+    # --- restart escalation ------------------------------------------------
+
+    def test_maybe_free_restart_disabled_keeps_free_only_behavior(self):
+        # COMFY_MEMORY_RESTART defaults to False: even if memory stays high
+        # after /free we never kill ComfyUI nor sleep for the verification.
+        with patch.object(handler, "_get_memory_usage_percent", side_effect=[95.0, 95.0]), \
+             patch.object(handler, "_comfy_queue_idle", return_value=True), \
+             patch.object(handler, "_free_comfyui_memory", return_value=True), \
+             patch.object(handler, "_kill_comfyui") as mock_kill, \
+             patch("handler.time.sleep") as mock_sleep:
+            handler._maybe_free_comfyui_memory(" (test)")
+        mock_kill.assert_not_called()
+        mock_sleep.assert_not_called()
+
+    def test_maybe_free_restart_escalates_when_still_high(self):
+        handler.COMFY_MEMORY_RESTART = True
+        with patch.object(handler, "_get_memory_usage_percent", side_effect=[95.0, 95.0]), \
+             patch.object(handler, "_comfy_queue_idle", return_value=True), \
+             patch.object(handler, "_free_comfyui_memory", return_value=True), \
+             patch.object(handler, "_kill_comfyui", return_value=True) as mock_kill, \
+             patch.object(handler, "_wait_for_comfyui_restart") as mock_wait, \
+             patch("handler.time.sleep") as mock_sleep:
+            handler._maybe_free_comfyui_memory(" (test)")
+        mock_kill.assert_called_once()
+        mock_wait.assert_called_once()
+
+    def test_maybe_free_restart_skipped_when_free_sufficient(self):
+        handler.COMFY_MEMORY_RESTART = True
+        with patch.object(handler, "_get_memory_usage_percent", side_effect=[95.0, 50.0]), \
+             patch.object(handler, "_comfy_queue_idle", return_value=True), \
+             patch.object(handler, "_free_comfyui_memory", return_value=True), \
+             patch.object(handler, "_kill_comfyui") as mock_kill, \
+             patch("handler.time.sleep") as mock_sleep:
+            handler._maybe_free_comfyui_memory(" (test)")
+        mock_kill.assert_not_called()
+
+    def test_maybe_free_restart_min_uptime_guard(self):
+        # ComfyUI restarted 30s ago (< 300s min uptime): skip the restart even
+        # though memory is still high after /free.
+        handler.COMFY_MEMORY_RESTART = True
+        handler._last_restart_time = time.time() - 30
+        with patch.object(handler, "_get_memory_usage_percent", side_effect=[95.0, 95.0]), \
+             patch.object(handler, "_comfy_queue_idle", return_value=True), \
+             patch.object(handler, "_free_comfyui_memory", return_value=True), \
+             patch.object(handler, "_kill_comfyui") as mock_kill, \
+             patch("handler.time.sleep") as mock_sleep:
+            handler._maybe_free_comfyui_memory(" (test)")
+        mock_kill.assert_not_called()
+
+    def test_comfyui_pids_via_psutil(self):
+        conn = Mock()
+        conn.laddr = Mock()
+        conn.laddr.port = 8188
+        conn.pid = 1234
+        fake_psutil = Mock()
+        fake_psutil.net_connections.return_value = [conn]
+        with patch.object(handler, "_psutil", fake_psutil):
+            pids = handler._comfyui_pids()
+        self.assertEqual(pids, [1234])
+
+    def test_kill_comfyui_kills_pids(self):
+        fake_psutil = Mock()
+        proc = fake_psutil.Process.return_value
+        with patch.object(handler, "_psutil", fake_psutil), \
+             patch.object(handler, "_comfyui_pids", return_value=[42]):
+            result = handler._kill_comfyui(" (test)")
+        self.assertTrue(result)
+        fake_psutil.Process.assert_called_once_with(42)
+        proc.kill.assert_called_once()
+
+    def test_kill_comfyui_no_pids_returns_false(self):
+        with patch.object(handler, "_comfyui_pids", return_value=[]):
+            result = handler._kill_comfyui(" (test)")
+        self.assertFalse(result)
