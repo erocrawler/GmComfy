@@ -37,6 +37,9 @@ DEFAULT_CLEANUP_DIRS = os.environ.get(
     'COMFY_CLEANUP_DIRS',
     '/workspace/runpod-slim/ComfyUI/output,/workspace/runpod-slim/ComfyUI/input'
 ).split(',')
+# Tri-state sage attention capability: 'true' / 'false' / None (auto → header
+# omitted, the server falls back to its ENABLE_SAGE_ATTENTION_LOCAL env).
+DEFAULT_SAGE_ATTENTION = os.environ.get('WORKER_SAGE_ATTENTION')
 
 
 class LocalWorker:
@@ -45,7 +48,8 @@ class LocalWorker:
     def __init__(self, api_url, poll_interval=5, worker_secret: str | None = None, user_id: str | None = None,
                  sentinel_file: str = DEFAULT_SENTINEL_FILE,
                  cleanup_enabled: bool = DEFAULT_CLEANUP_ENABLED, cleanup_age_hours: float = DEFAULT_CLEANUP_AGE_HOURS,
-                 cleanup_dirs: list[str] = DEFAULT_CLEANUP_DIRS):
+                 cleanup_dirs: list[str] = DEFAULT_CLEANUP_DIRS,
+                 sage_attention: str | None = DEFAULT_SAGE_ATTENTION):
         self.api_url = api_url.rstrip('/')
         self.poll_interval = poll_interval
         self.worker_secret = worker_secret
@@ -54,18 +58,39 @@ class LocalWorker:
         self.cleanup_enabled = cleanup_enabled
         self.cleanup_age_hours = cleanup_age_hours
         self.cleanup_dirs = cleanup_dirs
+        self.sage_attention = sage_attention
         self.task_url = f"{self.api_url}/api/worker/task"
         logger.info(f"Initialized worker with API URL: {self.api_url}")
         logger.info(f"Poll interval: {self.poll_interval}s")
         logger.info(f"Sentinel file: {self.sentinel_file}")
         if self.user_id:
             logger.info(f"Scoped to user: {self.user_id}")
+        if self.sage_attention is not None:
+            logger.info(f"Sage attention capability declared: {self.sage_attention}")
+        else:
+            logger.info("Sage attention capability not declared (server env fallback)")
         logger.info(f"Output cleanup: {'enabled' if self.cleanup_enabled else 'disabled'}")
         if self.cleanup_enabled:
             logger.info(f"Cleanup age threshold: {self.cleanup_age_hours} hours")
             logger.info(f"Cleanup dirs: {', '.join(self.cleanup_dirs)}")
         if not self.worker_secret:
             logger.warning("No WORKER_TASK_SECRET provided; task endpoint may reject requests")
+
+    def _capabilities_headers(self) -> dict:
+        """Build capability headers for the task request.
+
+        Sage attention is tri-state:
+          'true'  → declares sage_attention
+          'false' → declares capabilities WITHOUT sage_attention (server
+                    conservatively disables it, so we never get a workflow we
+                    can't run)
+          None    → no header; the server falls back to ENABLE_SAGE_ATTENTION_LOCAL
+        """
+        headers = {}
+        if self.sage_attention is not None:
+            caps = ['sage_attention'] if self.sage_attention.lower() == 'true' else ['no_sage_attention']
+            headers['x-worker-capabilities'] = ','.join(caps)
+        return headers
     
     def fetch_task(self):
         """
@@ -81,6 +106,7 @@ class LocalWorker:
                 headers['x-worker-secret'] = self.worker_secret
             if self.user_id:
                 headers['x-worker-user-id'] = self.user_id
+            headers.update(self._capabilities_headers())
             response = requests.get(self.task_url, headers=headers, timeout=10)
             
             if response.status_code == 404:
@@ -343,6 +369,12 @@ def main():
         help=f'Directories to clean up (default: {DEFAULT_CLEANUP_DIRS})'
     )
     parser.add_argument(
+        '--sage-attention',
+        default=DEFAULT_SAGE_ATTENTION,
+        help='Declare sage attention capability: true / false / auto (env WORKER_SAGE_ATTENTION). '
+             'auto (or unset) omits the header so the server falls back to its env default'
+    )
+    parser.add_argument(
         '--debug',
 
         action='store_true',
@@ -364,7 +396,8 @@ def main():
         sentinel_file=args.sentinel_file,
         cleanup_enabled=args.cleanup_enabled,
         cleanup_age_hours=args.cleanup_age_hours,
-        cleanup_dirs=args.cleanup_dirs
+        cleanup_dirs=args.cleanup_dirs,
+        sage_attention=args.sage_attention
     )
     
     try:

@@ -46,6 +46,7 @@ chmod +x local_worker.py
 | `BUCKET_NAME` | - | S3 bucket name (optional) |
 | `BUCKET_ACCESS_KEY_ID` | - | S3 access key (optional) |
 | `BUCKET_SECRET_ACCESS_KEY` | - | S3 secret key (optional) |
+| `WORKER_SAGE_ATTENTION` | *(unset)* | Declare sage attention capability: `true` / `false`. Unset → the header is omitted and the server falls back to its `ENABLE_SAGE_ATTENTION_LOCAL` env. |
 
 ### Command Line Arguments
 
@@ -57,6 +58,10 @@ Options:
 - `--api-url URL` - GmAnimato API URL
 - `--poll-interval SECONDS` - Poll interval in seconds
 - `--max-retries COUNT` - Maximum callback retry attempts
+- `--sage-attention true|false|auto` - Declare sage attention capability.
+  `true`/`false` send an `x-worker-capabilities` header (e.g. `sage_attention`
+  or `no_sage_attention`); `auto` (default) omits the header so the server uses
+  its `ENABLE_SAGE_ATTENTION_LOCAL` env.
 - `--debug` - Enable debug logging
 
 ## Usage
