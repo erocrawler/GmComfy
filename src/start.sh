@@ -50,18 +50,31 @@ fi
 # Restart delay for the ComfyUI supervisor loop (seconds).
 : "${COMFY_RESTART_DELAY_S:=2}"
 
+# Where ComfyUI's stdout/stderr are written. Kept on LOCAL storage (/tmp) —
+# NOT /workspace, which is the shared network disk between serverless
+# instances (writing logs there would collide across workers and burn network
+# IO). Also tee'd to the container stdout so RunPod serverless logs capture it
+# live. Override via COMFYUI_LOG_FILE.
+: "${COMFYUI_LOG_FILE:=/tmp/comfyui.log}"
+
 # Run ComfyUI inside a supervisor loop. In serverless mode there is no external
 # process manager, so this loop plays that role: whenever the ComfyUI process
 # exits - a crash, an OOM-kill, or an intentional kill from the handler's memory
 # monitor (COMFY_MEMORY_RESTART=true) - it is restarted with a fresh process.
 # Handlers poll the HTTP API (check_server) before each job, so they wait for
 # the restart to complete.
+#
+# Logging: ComfyUI runs in the background, so its output can be lost from the
+# RunPod serverless log view. Tee it to ${COMFYUI_LOG_FILE} AND to stdout, and
+# log the supervisor messages to the same file, so the failure that precedes a
+# restart (e.g. an upscale node error) is always inspectable.
 restart_comfyui() {
     while true; do
-        echo "worker-comfyui: Starting ComfyUI"
-        python -u /comfyui/main.py ${COMFY_ARGS}
-        exit_code=$?
-        echo "worker-comfyui: ComfyUI exited (code ${exit_code}); restarting in ${COMFY_RESTART_DELAY_S}s..."
+        echo "worker-comfyui: Starting ComfyUI (logs: ${COMFYUI_LOG_FILE})" | tee -a "${COMFYUI_LOG_FILE}"
+        # PIPESTATUS[0] preserves ComfyUI's own exit code through the tee pipe.
+        python -u /comfyui/main.py ${COMFY_ARGS} 2>&1 | tee -a "${COMFYUI_LOG_FILE}"
+        exit_code=${PIPESTATUS[0]}
+        echo "worker-comfyui: ComfyUI exited (code ${exit_code}); restarting in ${COMFY_RESTART_DELAY_S}s..." | tee -a "${COMFYUI_LOG_FILE}"
         sleep "${COMFY_RESTART_DELAY_S}"
     done
 }

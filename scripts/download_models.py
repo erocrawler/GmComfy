@@ -117,7 +117,7 @@ MODELS = {
                 "path": "models/upscale_models",
                 "size_gb": 0.064,
                 "sha256": "49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb",
-            }
+            },
         },
         
         # LoRAs
@@ -234,6 +234,12 @@ MODELS = {
                 "path": "models/loras",
                 "size_gb": 0.3,
                 "sha256": "b04aed102ffc4bbba7ec9d52eece2507d33b6574838684731bbc47842004a763",
+            },
+            "Wan22_I2V_VBVR_HIGH_rank_64_fp16.safetensors": {
+                "url": "https://huggingface.co/Kijai/WanVideo_comfy/resolve/main/LoRAs/VBVR/Wan22_I2V_VBVR_HIGH_rank_64_fp16.safetensors",
+                "path": "models/loras",
+                "size_gb": 0.631,
+                "sha256": "a4d2256f5c166c4a8d5b256b2134720aee2c56415c5efc37a6d060164eb06244"
             }
         }
     },
@@ -307,13 +313,23 @@ MODELS = {
         },
 
         
-        # LoRAs
+        # LoRAs — the two lightx2v distilled turbo LoRAs are the REQUIRED
+        # speed-up LoRAs for the MiniMax H3 workflows (FL2VA 8-step for
+        # fl2v/i2v, Ref2VA 4-step for ref2v). These replace the old drbaph
+        # v4-step600 turbo LoRA, which is NOT compatible with the
+        # sigma-shift + euler distilled recipe (shift 12/3, 4/8 NFE).
         "loras": {
-            "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors": {
-                "url": "https://huggingface.co/drbaph/MiniMax-H3-Turbo-Lora-ComfyUI/resolve/main/minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+            "minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors": {
+                "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_fl2v_turbo_8step_v1.0_comfyui_bf16.safetensors",
                 "path": "models/loras",
-                "size_gb": 0.6,
-                "sha256": "7098acf3ee75028fd9fcd948f50fcc8d995057fabb76f86bd3ca2c0ffc58e409",
+                "size_gb": 1.96,
+                "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
+            },
+            "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": {
+                "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+                "path": "models/loras",
+                "size_gb": 1.96,
+                "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c",
             },
             "HMNSFW_AIO_V2.safetensors": {
                 "url": "https://civitai.com/api/download/models/3206518",
