@@ -301,7 +301,7 @@ MODELS = {
 
     "minimax": {
         # MiniMax H3 (image/video-to-video with audio). Text encoder, VAEs, and
-        # the pruned INT8 ConvRot diffusion models (fl2va + ref2va) required by
+        # the UNPRUNED INT8 ConvRot diffusion models (fl2va + ref2va) required by
         # the MiniMax H3 workflows.
         "clip": {
             "qwen3vl_32b_h3_ultra_uncensored_heretic_int8_convrot.safetensors": {
@@ -314,8 +314,8 @@ MODELS = {
 
         
         # LoRAs — the two lightx2v distilled turbo LoRAs are the REQUIRED
-        # speed-up LoRAs for the MiniMax H3 workflows (FL2VA 8-step for
-        # fl2v/i2v, Ref2VA 4-step for ref2v). These replace the old drbaph
+        # speed-up LoRAs for the MiniMax H3 workflows (FL2VA 8-step v1.0 for
+        # fl2v/i2v, Ref2VA 8-step v1.0 for ref2v). These replace the old drbaph
         # v4-step600 turbo LoRA, which is NOT compatible with the
         # sigma-shift + euler distilled recipe (shift 12/3, 4/8 NFE).
         "loras": {
@@ -325,11 +325,17 @@ MODELS = {
                 "size_gb": 1.96,
                 "sha256": "2339acdf19bfe123f46b971ea35d367a84adb85de43627e1eceafa5a5b2b111e",
             },
-            "minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors": {
-                "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_ref2v_turbo_4step_v0.1_comfyui_bf16.safetensors",
+            "minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors": {
+                "url": "https://huggingface.co/lightx2v/Minimax-h3-Turbo/resolve/main/minimax_h3_ref2v_turbo_8step_v1.0_768p_comfyui_bf16.safetensors",
                 "path": "models/loras",
-                "size_gb": 1.96,
-                "sha256": "5b9ab5ade15d0775676d01a907268a69a1468dc6033b3b0d3ded5502f3ebb84c",
+                "size_gb": 1.82,
+                "sha256": "6a56f41ab4229c9dd845b9501bbd475ee57e112d846cf2e819d534a1ae928c5a",
+            },
+            "minimax-h3_fl2v_8Step_motion_enhancer.safetensors": {
+                "url": "https://huggingface.co/rzgar/minimax-h3_fl2v_8Step_motion_enhancer/resolve/main/minimax-h3_fl2v_8Step_motion_enhancer.safetensors",
+                "path": "models/loras",
+                "size_gb": 1.82,
+                "sha256": "4a6d19e2b39b9d7380523041f5d39f9b683177ef0717d1767a6d716e4437890c",
             },
             "HMNSFW_AIO_V2.safetensors": {
                 "url": "https://civitai.com/api/download/models/3206518",
@@ -382,19 +388,19 @@ MODELS = {
             }
         },
 
-        # Diffusion Models (INT8 ConvRot — faster than FP8 with equivalent quality)
+        # Diffusion Models (UNPRUNED INT8 ConvRot — faster than FP8 with equivalent quality)
         "diffusion_models": {
-            "minimax_h3_fl2va_pruned_int8_convrot.safetensors": {
-                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+            "minimax_h3_fl2va_int8_convrot.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_fl2va_int8_convrot.safetensors",
                 "path": "models/diffusion_models",
-                "size_gb": 21,
-                "sha256": "e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a",
+                "size_gb": 31.7,
+                "sha256": "7ad4c73e6e378b822ffd1629f27f632d3787d95f5e468e3af958f98c58df96a5",
             },
-            "minimax_h3_ref2va_pruned_int8_convrot.safetensors": {
-                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+            "minimax_h3_ref2va_int8_convrot.safetensors": {
+                "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors",
                 "path": "models/diffusion_models",
-                "size_gb": 21,
-                "sha256": "9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779",
+                "size_gb": 31.7,
+                "sha256": "9eef934046a0671bc8a5daf87100705e1478419c574cfde70c50fbe6885f76a9",
             }
         }
     }
