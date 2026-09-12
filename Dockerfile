@@ -1,5 +1,5 @@
 # Build argument for base image selection
-ARG BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
+ARG BASE_IMAGE=nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 
 # Stage 1: Base image with common dependencies
 FROM ${BASE_IMAGE} AS base
@@ -10,7 +10,7 @@ RUN echo "Resetting cache: $CACHE_BUST"
 
 # Build arguments for this stage with sensible defaults for standalone builds
 ARG COMFYUI_VERSION=latest
-ARG PYTORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu128
+ARG PYTORCH_CUDA_INDEX_URL=https://download.pytorch.org/whl/cu130
 
 # Prevents prompts from packages asking for user input during installation
 ENV DEBIAN_FRONTEND=noninteractive
@@ -52,12 +52,13 @@ RUN wget -qO- https://astral.sh/uv/install.sh | sh \
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# Install PyTorch 2.8
+# Install PyTorch 2.9.1
 RUN uv pip install \
-    "torch>=2.8.0,<2.9.0" \
-    "torchaudio>=2.8.0,<2.9.0" \
-    torchvision \
+    "torch==2.9.1" \
+    "torchaudio==2.9.1" \
+    "torchvision==0.24.1" \
     --index-url ${PYTORCH_CUDA_INDEX_URL} \
+    --only-binary=:all: \
     --upgrade \
     --break-system-packages
 
@@ -70,7 +71,7 @@ RUN uv pip install \
     --break-system-packages
     
 # 2. Install the Flash Attention Wheel
-RUN uv pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp312-cp312-linux_x86_64.whl
+RUN uv pip install --only-binary=:all: https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu13torch2.9cxx11abiTRUE-cp312-cp312-linux_x86_64.whl
 
 # Install ComfyUI
 RUN /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
