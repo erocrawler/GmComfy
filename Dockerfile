@@ -5,7 +5,7 @@ ARG BASE_IMAGE=nvidia/cuda:13.0.3-cudnn-devel-ubuntu24.04
 FROM ${BASE_IMAGE} AS base
 
 # cache busting to force runpod retrys
-ARG CACHE_BUST=20260812
+ARG CACHE_BUST=20260918
 RUN echo "Resetting cache: $CACHE_BUST"
 
 # Build arguments for this stage with sensible defaults for standalone builds
