@@ -14,6 +14,8 @@ import requests
 import argparse
 import logging
 import shutil
+import subprocess
+import urllib.request
 from pathlib import Path
 from handler import handler as comfy_handler
 from handler import wait_for_pending_webhooks
@@ -268,6 +270,41 @@ class LocalWorker:
         except Exception as e:
             logger.error(f"Error during cleanup: {e}", exc_info=True)
     
+    def maybe_restart_comfyui(self):
+        """Restart ComfyUI between tasks when a flag file is present.
+
+        Uses the same kill + wait path as handler.py's memory escalation, so
+        there is one restart implementation. The worker is single-threaded and
+        calls this before fetching the next task, therefore no job can be in
+        flight. The flag is consumed even if the restart fails, to avoid a
+        restart loop on every poll.
+        """
+        flag = os.environ.get("COMFY_RESTART_FLAG", "/workspace/.comfy_restart")
+        if not os.path.exists(flag):
+            return
+        try:
+            os.remove(flag)
+        except Exception as e:
+            logger.warning(f"Could not remove restart flag {flag}: {e}")
+            return
+        try:
+            from handler import restart_comfyui
+        except Exception as e:
+            logger.error(f"Cannot import handler.restart_comfyui: {e}")
+            return
+        logger.info("Restart flag detected; restarting ComfyUI via handler.restart_comfyui()")
+        t0 = time.time()
+        try:
+            ok = restart_comfyui(" (requested by local worker)")
+        except Exception as e:
+            logger.error(f"ComfyUI restart raised: {e}")
+            return
+        took = time.time() - t0
+        if ok:
+            logger.info(f"ComfyUI back after {took:.1f}s")
+        else:
+            logger.error(f"ComfyUI did not come back after restart (waited {took:.1f}s)")
+
     def run(self):
         """Main worker loop"""
         logger.info("Starting local worker...")
@@ -288,6 +325,9 @@ class LocalWorker:
                     except Exception as e:
                         logger.warning(f"Could not remove sentinel file: {e}")
                     break
+                
+                # Restart ComfyUI between tasks if a flag file is present
+                self.maybe_restart_comfyui()
                 
                 # Periodic cleanup
                 current_time = time.time()

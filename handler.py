@@ -293,6 +293,18 @@ def _wait_for_comfyui_restart():
     return ok
 
 
+def restart_comfyui(reason=""):
+    """Force a fresh ComfyUI process and wait for its API to come back.
+
+    Shared by the memory-escalation path and the local worker's
+    between-task restart hook, so both use the same kill + wait semantics.
+    Returns True when ComfyUI answers again.
+    """
+    if not _kill_comfyui(reason):
+        return False
+    return _wait_for_comfyui_restart()
+
+
 def _maybe_free_comfyui_memory(reason=""):
     """Free ComfyUI memory if RAM usage exceeds the limit (with safeguards).
 
