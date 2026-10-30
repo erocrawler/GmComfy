@@ -76,6 +76,18 @@ RUN uv pip install --only-binary=:all: https://github.com/Dao-AILab/flash-attent
 # Install ComfyUI
 RUN /usr/bin/yes | comfy --workspace /comfyui install --version "${COMFYUI_VERSION}" --nvidia
 
+# MiniMax H3 768p two-stage mode needs MiniMaxH3LatentUpscaleWithModel (ComfyUI PR #17412, merged
+# 2026-10-28). The latest release tag (v0.43.0, 2026-10-27) does NOT contain it, so pin the merge commit.
+# That commit's requirements.txt pins comfy-kitchen==0.2.40, which the new latent upscaler needs
+# (0.2.39 lacks group_norm_stats3d). Set COMFYUI_REF="" to skip and keep the release tag.
+ARG COMFYUI_REF=35060f0156181ae78a86b10f098f67ce8e83697f
+# Skipped automatically once the release already ships the node, so a stale pin can never downgrade a newer release.
+RUN if [ -n "${COMFYUI_REF}" ] && ! grep -q "class MiniMaxH3LatentUpscaleWithModel" /comfyui/comfy_extras/nodes_minimax_h3.py; then \
+      cd /comfyui && git fetch origin "${COMFYUI_REF}" && git checkout -f FETCH_HEAD; \
+    else \
+      echo "COMFYUI_REF pin skipped (empty, or the installed release already has MiniMaxH3LatentUpscaleWithModel)"; \
+    fi
+
 # Install Python dependencies declared by the installed ComfyUI workspace
 RUN uv pip install -r /comfyui/requirements.txt --break-system-packages
 
@@ -110,6 +122,14 @@ WORKDIR /comfyui/custom_nodes
 RUN git clone https://github.com/kijai/ComfyUI-PromptRelay.git && \
     cd ComfyUI-PromptRelay && \
     uv pip install -r requirements.txt --break-system-packages
+
+# H3 latent upscaler (LBH-123-AI/Minimax_h3_latent_Upscaler, conv_v1 fp16, 690,592,672 B) for the 768p
+# two-stage mode. The workflows reference it as ..._3d_fp16_V2.safetensors (same bytes as the L40S copy);
+# sha256 is verified. extra_model_paths.yaml also lists latent_upscale_models on the network volume.
+RUN mkdir -p /comfyui/models/latent_upscale_models && \
+    wget -q -O /comfyui/models/latent_upscale_models/minimax_h3_latent_upscaler_3d_fp16_V2.safetensors \
+      "https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler/resolve/main/minimax_h3_latent_upscaler_3d_conv_v1/minimax_h3_latent_upscaler_3d_conv_v1_fp16.safetensors" && \
+    echo "043e5a48e161610ef6c3ea974645220354d06fa618abca15f76d084812eb55c2  /comfyui/models/latent_upscale_models/minimax_h3_latent_upscaler_3d_fp16_V2.safetensors" | sha256sum -c -
 
 # Copy helper script to switch Manager network mode at container start
 COPY scripts/comfy-manager-set-mode.sh /usr/local/bin/comfy-manager-set-mode
